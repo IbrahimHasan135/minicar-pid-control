@@ -1,380 +1,450 @@
 # Mini Car Implementation Notes
 
-Catatan ini merangkum cara implementasi repo `minicar-pid-control` berdasarkan:
-
-- `docs/MINICAR_ARCHITECTURE.md`
-- `docs/MINICAR_CODING_RULES.md`
-- target framework: ESP-IDF 5.4.4
-
-Tujuan catatan ini adalah menjadi pegangan sebelum eksekusi coding. Fokus pekerjaan Codex adalah `application`, `logic/task`, dan `service` layer. Driver dibuat sebagai file/interface/skeleton saja agar implementasi hardware detail dapat dikerjakan oleh Aranda.
-
-## Boundary Pekerjaan
-
-Codex boleh mengerjakan:
-
-- `main/application`
-- `main/logic`
-- `main/service`
-- `main/model`
-- `main/config`
-- wiring awal di `app_main.cpp`
-- update `main/CMakeLists.txt`
-- dokumentasi handoff untuk AI/developer lain
-
-Codex tidak mengisi logic hardware driver:
-
-- tidak menulis GPIO/LEDC/PCNT/UART/I2C/SPI detail
-- tidak menentukan pin final
-- tidak mengakses ESP-IDF hardware API di service/task
-- driver cukup berupa class/interface/skeleton dengan method yang dibutuhkan service
-
-Aranda mengerjakan:
-
-- `MotorEncoderDriver`
-- `IMUDriver`
-- `SerialDriver`
-- `ConsoleDriver`
-- konfigurasi hardware pin/peripheral final
-- validasi hardware real
-
-## Layer Contract
-
-Dependency harus tetap turun:
+Catatan ini adalah pegangan implementasi repo `minicar-pid-control` setelah keputusan arsitektur baru:
 
 ```text
-Application
-    -> Logic / FreeRTOS Task
-    -> Service
-    -> Driver
-    -> Hardware
+Application defines intent.
+Logic/Task owns runtime behavior.
+Service provides passive capability.
+Driver touches hardware.
 ```
 
-Shortcut yang tidak boleh dibuat:
-
-- Application langsung ke Service low-level atau Driver
-- Task langsung ke Driver
-- Service membaca Driver milik service lain
-- Driver memanggil Service/Task
-- PID ditempatkan di Task atau Driver
-
-## Implementation Shape
-
-Struktur awal yang direkomendasikan:
+Target framework:
 
 ```text
-main/
-|-- app_main.cpp
-|-- application/
-|-- logic/
-|-- service/
-|-- driver/
-|-- model/
-`-- config/
+ESP-IDF 5.4.4
+C++
+FreeRTOS
 ```
 
-Tahap awal tetap satu ESP-IDF component di folder `main`. Belum perlu memecah ke `components/` sampai arsitektur stabil.
+## 1. Current Architecture Decision
 
-## Model First
+Tidak menggunakan `MotionService` sebagai facade aktif.
 
-Buat shared DTO di `main/model`:
+Motion logic berada di:
 
-- `MotionCommand.hpp`
-- `MotionState.hpp`
-- `TelemetryMessage.hpp`
-- `Pose2D.hpp`
-- `RobotState.hpp`
-
-Gunakan suffix unit untuk value fisik:
-
-- `distance_m`
-- `speed_mps`
-- `angle_deg`
-- `heading_deg`
-- `yaw_rate_dps`
-- `dt_s`
-
-Convention awal yang perlu dijaga konsisten:
-
-- `MOVE +distance_m` = maju
-- `MOVE -distance_m` = mundur
-- `TURN +angle_deg` = kanan
-- `TURN -angle_deg` = kiri
-- internal heading menggunakan degree sampai ada keputusan lain
-
-## Config
-
-Pisahkan konstanta di `main/config`:
-
-- `RobotConfig.hpp`: wheel diameter, wheel base, ticks per rev, speed limit, tolerance
-- `PIDConfig.hpp`: gain PID speed kiri/kanan dan heading
-- `FreeRTOSConfig.hpp`: priority, stack, queue size, control period
-
-Jangan menyebar magic number di service/task.
-
-## Service Layer
-
-Service harus dapat diuji tanpa scheduler sebanyak mungkin. FreeRTOS API jangan masuk core motion calculation.
-
-Service utama:
-
-- `MotorControlService`
-- `HeadingService`
-- `OdometryService`
-- `MotionService`
-- `TelemetryService`
-- `CommunicationService`
-
-Helper:
-
-- `PIDController`
-
-### PIDController
-
-Generic, tidak tahu motor/heading/navigation.
-
-API minimal:
-
-```cpp
-float update(float setpoint, float measurement, float dt_s);
-void reset();
-void setOutputLimit(float min_output, float max_output);
-void setIntegralLimit(float min_integral, float max_integral);
+```text
+main/logic/motion_control/
 ```
 
-Wajib ada:
+Isi module:
 
-- output clamp
-- integral clamp atau anti-windup sederhana
-- `reset()` saat command baru atau state berubah tajam
+```text
+MotionCommandTask
+MotionLoopTask
+MotionControlContext
+```
+
+Alasan:
+
+- command sequencing adalah runtime behavior,
+- move/turn state machine adalah logic,
+- periodic control harus jelas berada di task loop,
+- service harus tetap menjadi alat bantu pasif dengan bahasa/unit stabil,
+- driver dapat diganti tanpa mengubah bahasa logic di atasnya.
+
+## 2. Layer Roles
+
+### Application
+
+Folder:
+
+```text
+main/application/
+```
+
+Peran:
+
+- mendefinisikan mission,
+- push `MotionCommand` ke queue,
+- tidak tahu detail service/driver.
+
+Contoh:
+
+```text
+Mission -> MotionCommandQueue
+```
+
+### Logic / Task
+
+Folder:
+
+```text
+main/logic/
+```
+
+Peran:
+
+- FreeRTOS task,
+- queue ownership,
+- motion state machine,
+- command sequencing,
+- control timing,
+- fail-safe decision,
+- memanggil service.
+
+Logic tidak boleh akses driver langsung.
+
+### Service
+
+Folder:
+
+```text
+main/service/
+```
+
+Peran:
+
+- passive capability/helper,
+- bahasa unit stabil,
+- perhitungan domain kecil,
+- PID helper,
+- owner tunggal driver tertentu.
+
+Service tidak boleh membuat task atau command queue.
+
+### Driver
+
+Folder:
+
+```text
+main/driver/
+```
+
+Peran:
+
+- satu-satunya layer yang menyentuh hardware API,
+- configure/read/write peripheral,
+- expose raw/hardware-near data,
+- tidak punya motion logic.
+
+## 3. Motion Control Module
+
+Folder:
+
+```text
+main/logic/motion_control/
+```
+
+### MotionCommandTask
+
+Event-driven task.
+
+Tugas:
+
+- `xQueueReceive(MotionCommandQueue, ..., portMAX_DELAY)`,
+- submit command ke `MotionControlContext`,
+- menunggu sampai context siap menerima command berikutnya,
+- menjaga urutan command.
+
+Tidak melakukan:
+
+- PID,
+- odometry,
+- sensor update,
+- driver access.
+
+### MotionLoopTask
+
+Periodic task.
+
+Tugas:
+
+- berjalan 100 Hz awal,
+- update heading,
+- refresh motor feedback,
+- update odometry,
+- ambil pending command dari context,
+- start move/turn,
+- hitung wheel target,
+- apply motor control,
+- detect completion,
+- fail-safe stop.
+
+Loop ini adalah tempat utama move/turn control logic.
+
+### MotionControlContext
+
+Shared state antara command task dan loop task.
+
+Menyimpan:
+
+- active state,
+- active command,
+- pending command,
+- stop request,
+- target distance,
+- target speed,
+- start distance,
+- target heading.
+
+Context harus memakai critical section pendek. Jangan menjalankan I/O saat lock.
+
+## 4. Service Contracts
 
 ### MotorControlService
 
-Satu-satunya service yang punya akses ke `MotorEncoderDriver`.
+Owner:
 
-Tanggung jawab:
+```text
+MotorEncoderDriver
+```
 
-- baca ticks/RPM dari driver
-- ubah feedback ke velocity engineering unit
-- PID speed kiri dan kanan
-- clamp output motor
-- dead-zone compensation jika dibutuhkan
-- expose encoder/velocity state untuk `MotionService`
+API concept:
 
-Tidak boleh:
+```cpp
+refreshFeedback();
+setVelocityTargets(left_mps, right_mps);
+applyControl(dt_s);
+stopMotor();
+getLeftTicks();
+getRightTicks();
+getLeftVelocityMps();
+getRightVelocityMps();
+```
 
-- tahu `MotionCommand`
-- menjalankan state machine move/turn
-- membaca IMU
-- mengirim telemetry blocking
+Tugas:
+
+- convert RPM/ticks ke unit service,
+- speed PID kiri/kanan,
+- clamp output,
+- stop motor.
 
 ### HeadingService
 
-Satu-satunya service yang punya akses ke `IMUDriver`.
+Owner:
 
-Tanggung jawab:
+```text
+IMUDriver
+```
 
-- update heading relatif dari gyro/IMU
-- normalize angle error ke shortest path
-- PID heading correction
-- expose heading dan yaw rate
-- reset reference saat command baru
+Tugas:
 
-Tidak boleh:
-
-- akses motor driver
-- menentukan command mission
-- melakukan turn blocking loop
+- update heading relatif,
+- expose heading/yaw rate,
+- normalize angle,
+- heading PID correction.
 
 ### OdometryService
 
-Pure computation service. Tidak punya driver.
+Tidak punya driver.
 
-Input berasal dari `MotionService`:
+Input dari MotionLoopTask:
 
 ```cpp
 updateOdometry(left_ticks, right_ticks, heading_deg);
 ```
 
-Tanggung jawab:
+Tugas:
 
-- hitung travelled distance
-- hitung pose `Pose2D`
-- reset distance/pose reference
+- travelled distance,
+- pose 2D.
 
-### MotionService
+### CommunicationService
 
-Facade utama motion subsystem.
-
-Public API harus kecil:
-
-```cpp
-esp_err_t init();
-void update(float dt_s);
-bool startMove(float distance_m, float speed_mps);
-bool startTurn(float angle_deg);
-void stop();
-bool isBusy() const;
-bool isCompleted() const;
-MotionState getState() const;
-```
-
-`MotionService` boleh mengorkestrasi:
-
-- `MotorControlService`
-- `HeadingService`
-- `OdometryService`
-
-Tapi tidak boleh menjadi god class. `update()` idealnya hanya memanggil langkah kecil:
-
-```cpp
-updateHeading(dt_s);
-updateOdometryState();
-updateMotionState(dt_s);
-updateMotorControl(dt_s);
-```
-
-State handler dipisah:
-
-- `handleIdle()`
-- `handleMove()`
-- `handleTurn()`
-- `handleStopping()`
-- `handleError()`
-
-## Logic / Task Layer
-
-Task hanya scheduling/orchestration. Tidak ada PID, GPIO, encoder calculation, IMU read langsung, atau motion math detail.
-
-### ControlTask
-
-Periodik 100 Hz awal.
-
-Body ideal:
-
-```cpp
-motion_service.update(0.01f);
-vTaskDelayUntil(...);
-```
-
-Tidak boleh blocking telemetry/serial/queue dengan `portMAX_DELAY`.
-
-### MotionTask
-
-Satu-satunya consumer `MotionCommandQueue`.
-
-Tanggung jawab:
-
-- tunggu command
-- cek `motion_service.isBusy()`
-- panggil `startMove`, `startTurn`, atau `stop`
-- command berikutnya jalan setelah motion sebelumnya completed/idle
-
-Tidak boleh:
-
-- hitung PID
-- baca encoder/IMU
-- akses driver
-
-### SerialTask
-
-External command masuk lewat:
+Owner:
 
 ```text
-SerialDriver -> CommunicationService -> MotionCommandQueue
+SerialDriver
 ```
 
-Tidak boleh langsung ke motor atau langsung bypass queue.
+Tugas:
 
-### TelemetryTask
+- parse external command menjadi `MotionCommand`.
 
-Semua telemetry/log non-critical lewat `TelemetryQueue`.
+### TelemetryService
 
-Producer harus non-blocking:
-
-```cpp
-xQueueSend(queue, &message, 0);
-```
-
-Jika queue penuh, drop telemetry non-critical.
-
-## Driver Skeleton Boundary
-
-Driver file boleh dibuat agar service bisa compile dan Aranda punya kontrak API.
-
-Namun isi method hardware sebaiknya:
-
-- minimal stub
-- return `ESP_ERR_NOT_SUPPORTED` atau value netral bila belum diisi
-- diberi TODO spesifik untuk Aranda
-
-Driver skeleton tidak boleh mengandung fake control behavior yang menutupi pekerjaan hardware real.
-
-## Startup Flow
-
-`app_main()` nanti idealnya:
-
-1. create driver object
-2. create service object dengan dependency injection
-3. call `init()`
-4. create queue
-5. create task
-6. push initial mission dari application layer
-
-Initial mission demo:
+Owner:
 
 ```text
-MOVE 1.0 m @ 1.0 m/s
-TURN +90 deg
-MOVE 2.0 m @ 0.5 m/s
-STOP
+ConsoleDriver
 ```
 
-## ESP-IDF 5.4.4 Notes
+Tugas:
 
-Project harus tetap ESP-IDF native C++.
+- format dan publish telemetry.
 
-Konsekuensi implementasi:
+## 5. Driver Skeleton Boundary
 
-- ubah entry dari `main.c` ke `app_main.cpp`
-- pastikan `extern "C" void app_main(void)` dipakai
-- `main/CMakeLists.txt` mencantumkan semua `.cpp`
-- dependency ESP-IDF dicantumkan eksplisit jika diperlukan
-- tidak pindah ke Arduino
+Driver saat ini boleh berisi skeleton/TODO dulu.
 
-## Validation Boundary
+Untuk Aranda:
 
-Saat Codex mengerjakan layer non-driver:
+- isi hardware init,
+- isi read/write peripheral,
+- jaga API tetap sama jika memungkinkan,
+- jangan masukkan PID/state machine/queue ke driver.
 
-- boleh lakukan static/source check
-- boleh lakukan build hanya jika user mengizinkan
-- tidak mengklaim hardware valid sebelum diuji di device
-- driver behavior dianggap pending sampai Aranda implement dan hardware test
+Driver skeleton yang perlu diisi:
 
-## Implementation Order
+```text
+MotorEncoderDriver
+IMUDriver
+SerialDriver
+ConsoleDriver jika perlu dedicated UART
+```
 
-Urutan eksekusi yang disarankan:
+## 6. Runtime Flow
 
-1. Models + config
-2. Driver skeleton API
-3. PIDController
-4. MotorControlService, HeadingService, OdometryService
-5. MotionService + state machine
-6. MotionCommandQueue + MotionTask
-7. ControlTask
-8. TelemetryQueue + TelemetryTask + TelemetryService
-9. SerialTask + CommunicationService
-10. Application Mission example
-11. Handoff `.MD` detail untuk Aranda/AI lain
+Startup:
 
-## Handoff Rule untuk Aranda
+```text
+app_main
+  -> create drivers
+  -> create services
+  -> create MotionControlContext
+  -> create queues
+  -> init services
+  -> start TelemetryTask
+  -> start MotionLoopTask
+  -> start MotionCommandTask
+  -> start SerialTask
+  -> enqueue demo mission
+```
 
-Dokumen handoff berikutnya harus menjelaskan:
+Motion command flow:
 
-- file driver mana yang harus diisi
-- method mana yang menjadi kontrak service
-- apa yang tidak boleh diubah agar layer atas tidak rusak
-- convention unit dan sign
-- expected return/error behavior
-- test hardware minimal untuk setiap driver
-- log/telemetry yang boleh dipakai saat bring-up
+```text
+Application / Serial
+  -> MotionCommandQueue
+  -> MotionCommandTask
+  -> MotionControlContext
+  -> MotionLoopTask
+  -> Services
+  -> Drivers
+```
 
+Control loop flow:
+
+```text
+MotionLoopTask
+  -> HeadingService.updateHeading(dt_s)
+  -> MotorControlService.refreshFeedback()
+  -> OdometryService.updateOdometry(...)
+  -> start pending command if available
+  -> handle MOVING/TURNING/IDLE/ERROR
+  -> MotorControlService.applyControl(dt_s)
+```
+
+## 7. Queue Use
+
+`MotionCommandQueue`:
+
+- semua command masuk sini,
+- boleh berasal dari Application, Serial, future Navigation.
+
+`TelemetryQueue`:
+
+- log/status asynchronous,
+- producer high-priority harus timeout 0,
+- telemetry boleh drop.
+
+## 8. File Map
+
+```text
+main/application/Mission.*
+    Demo mission source.
+
+main/logic/motion_control/MotionCommandTask.*
+    Queue command consumer.
+
+main/logic/motion_control/MotionLoopTask.*
+    Periodic motion control executor.
+
+main/logic/motion_control/MotionControlContext.*
+    Shared motion state.
+
+main/logic/SerialTask.*
+    External command ingestion to queue.
+
+main/logic/TelemetryTask.*
+    Telemetry queue consumer.
+
+main/service/motor/MotorControlService.*
+    Passive motor/wheel speed capability.
+
+main/service/heading/HeadingService.*
+    Passive heading capability.
+
+main/service/odometry/OdometryService.*
+    Passive odometry computation.
+
+main/service/control/PIDController.*
+    Generic PID helper.
+
+main/driver/*
+    Hardware-only skeleton/contracts.
+```
+
+## 9. Sign and Unit Convention
+
+```text
+MOVE +distance_m = forward
+MOVE -distance_m = reverse
+TURN +angle_deg = right
+TURN -angle_deg = left
+speed_mps > 0 for MOVE command speed
+heading_deg normalized to [-180, 180)
+```
+
+Physical variable names should include unit suffix.
+
+## 10. Validation Boundary
+
+Current implementation has driver skeletons. Therefore:
+
+- source/static checks can be done,
+- build can be done only when user allows,
+- hardware behavior is not validated,
+- motor/IMU/serial readiness depends on driver implementation.
+
+Do not claim movement works until real driver and hardware test pass.
+
+## 11. Handoff Notes for Aranda or Next AI
+
+Do not reintroduce `MotionService` as active motion brain.
+
+When editing:
+
+- put command/state behavior in `logic/motion_control`,
+- put reusable calculation/capability in `service`,
+- put peripheral access in `driver`,
+- keep one driver owner per service,
+- keep CMake source list updated,
+- keep docs consistent if architecture changes again.
+
+## 12. Next Driver Work
+
+### MotorEncoderDriver
+
+Needs:
+
+- motor direction pin setup,
+- PWM/LEDC setup,
+- encoder counter setup,
+- output clamp/application,
+- left/right ticks,
+- left/right RPM,
+- safe stop.
+
+### IMUDriver
+
+Needs:
+
+- I2C/SPI setup,
+- IMU init,
+- gyro yaw rate read,
+- calibration/bias plan,
+- health reporting.
+
+### SerialDriver
+
+Needs:
+
+- UART setup,
+- non-fragile frame/line read,
+- timeout behavior.
+
+### ConsoleDriver
+
+Current stub uses console output. Replace only if telemetry needs dedicated UART.

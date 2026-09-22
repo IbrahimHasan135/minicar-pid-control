@@ -1,210 +1,165 @@
 # Mini Car Control System Architecture
-## ESP32 DevKit V1 — ESP-IDF + C++ + FreeRTOS
+## ESP32 DevKit V1 - ESP-IDF 5.4.4 + C++ + FreeRTOS
 
 ## 1. Purpose
 
-Dokumen ini mendefinisikan arsitektur software untuk mini car yang digunakan sebagai platform pengambilan data pada project indoor navigation.
+Dokumen ini menjelaskan arsitektur software mini car untuk platform pengambilan data indoor navigation.
 
-Fokus dokumen ini **bukan** algoritma indoor navigation, melainkan fondasi mini car yang harus mampu:
+Fokus architecture ini adalah fondasi motion control yang:
 
-- bergerak maju dengan jarak yang terukur,
-- menjaga kecepatan sesuai target,
-- menjaga arah agar tidak drifting,
-- melakukan belokan dengan sudut yang presisi,
 - menerima command secara modular,
-- mudah dikembangkan,
-- mudah diuji,
-- tidak memiliki code yang saling bertumpuk,
-- tidak memiliki akses hardware yang tersebar,
-- dapat ditambahkan komunikasi serial/Zigbee tanpa merusak control architecture.
+- menjalankan control loop yang stabil,
+- menjaga boundary hardware tetap jelas,
+- mudah diganti driver-nya tanpa mengubah bahasa layer atas,
+- tidak mencampur state machine, PID, driver, queue, dan log dalam satu tempat,
+- cocok dikerjakan beberapa developer/AI dengan tanggung jawab berbeda.
 
-Framework yang digunakan:
+Framework wajib:
 
-- **ESP-IDF**
-- **C++**
-- **FreeRTOS**
+```text
+ESP-IDF 5.4.4
+C++
+FreeRTOS
+```
 
-Paradigma utama:
+## 2. Layer Definition
+
+Layer resmi project:
 
 ```text
 Application
-    ↓
-Logic / FreeRTOS
-    ↓
-Service / OOP
-    ↓
-Driver / OOP
-    ↓
-Hardware
+    -> Logic / Task
+        -> Service
+            -> Driver
+                -> Hardware
 ```
 
-Prinsip terpenting:
-
-> Task menentukan kapan sesuatu dijalankan.  
-> Service menentukan bagaimana sesuatu dilakukan.  
-> Driver hanya berkomunikasi dengan hardware.
-
----
-
-# 2. Design Goals
-
-Architecture harus memenuhi aturan berikut.
-
-1. Driver dan Service menggunakan konsep OOP.
-2. Logic menggunakan FreeRTOS Task.
-3. `ControlTask` hanya mengenal `MotionService`.
-4. `MotionService` menjadi satu-satunya facade/pintu kontrol gerakan.
-5. Satu hardware driver hanya boleh dimiliki atau diakses oleh satu service.
-6. Task tidak boleh mengakses driver secara langsung.
-7. Application tidak boleh mengakses driver atau low-level service.
-8. PID tidak berada di Logic.
-9. PID merupakan bagian/helper pada Service Layer.
-10. Odometry tidak boleh membaca driver secara langsung.
-11. Logging harus melewati Telemetry Queue.
-12. Control loop tidak boleh blocking karena logging.
-13. Motion command dikirim melalui Queue.
-14. Komunikasi serial/Zigbee tidak boleh langsung mengontrol motor.
-15. Semua motion harus dapat diperintah melalui interface sederhana.
-16. Tidak boleh ada "sandwich code", yaitu satu function/class yang memuat seluruh proses sensor, PID, hardware, state machine, logging, dan command sekaligus.
-17. Dependency harus bergerak turun sesuai layer dan tidak lompat antar branch.
-
----
-
-# 3. High-Level Architecture
-
-```text
-┌──────────────────────────────────────────────┐
-│                  APPLICATION                 │
-│                                              │
-│ Mission Definition                           │
-│                                              │
-│ MOVE 1.0 m @ 1.0 m/s                         │
-│ TURN RIGHT 90 deg                            │
-│ MOVE 2.0 m @ 0.5 m/s                         │
-└─────────────────────┬────────────────────────┘
-                      │
-                      │ push MotionCommand
-                      ▼
-┌──────────────────────────────────────────────┐
-│                 LOGIC LAYER                  │
-│                 FreeRTOS                     │
-│                                              │
-│ MotionTask                                   │
-│ ControlTask                                  │
-│ SerialTask                                   │
-│ TelemetryTask                                │
-└─────────────────────┬────────────────────────┘
-                      │
-                      ▼
-┌──────────────────────────────────────────────┐
-│                SERVICE LAYER                 │
-│                                              │
-│ MotionService  ← main facade                 │
-│ MotorControlService                          │
-│ HeadingService                               │
-│ OdometryService                              │
-│ PIDController                                │
-│ CommunicationService                         │
-│ TelemetryService                             │
-└─────────────────────┬────────────────────────┘
-                      │
-                      ▼
-┌──────────────────────────────────────────────┐
-│                 DRIVER LAYER                 │
-│                                              │
-│ MotorEncoderDriver                           │
-│ IMUDriver                                    │
-│ SerialDriver                                 │
-│ ConsoleDriver                                │
-└─────────────────────┬────────────────────────┘
-                      │
-                      ▼
-                  HARDWARE
-```
-
----
-
-# 4. Dependency Direction
-
-Dependency utama harus selalu:
+Arti setiap layer:
 
 ```text
 Application
-    ↓
-Logic
-    ↓
+    Mendefinisikan mission atau sumber command level tinggi.
+
+Logic / Task
+    Memiliki flow runtime, queue, state machine, timing, sequencing, dan fail-safe decision.
+
 Service
-    ↓
+    Komponen pasif/helper dengan bahasa unit yang stabil. Service menghitung, memformat,
+    mengubah raw data menjadi engineering unit, dan memberi API yang rapi ke Logic.
+
 Driver
-    ↓
+    Satu-satunya layer yang menyentuh hardware/peripheral ESP-IDF low-level.
+
+Hardware
+    Motor, encoder, IMU, UART, console, peripheral fisik.
+```
+
+Rule inti:
+
+> Logic owns behavior. Service provides capability. Driver touches hardware.
+
+## 3. High-Level Architecture
+
+```text
+Application Mission / External Command
+        |
+        v
+MotionCommandQueue
+        |
+        v
+logic/motion_control
+    |-- MotionCommandTask   event-driven queue consumer
+    |-- MotionLoopTask      fixed-rate control loop
+    `-- MotionControlContext shared motion state
+        |
+        v
+Service Layer
+    |-- MotorControlService
+    |-- HeadingService
+    |-- OdometryService
+    |-- PIDController
+    |-- CommunicationService
+    `-- TelemetryService
+        |
+        v
+Driver Layer
+    |-- MotorEncoderDriver
+    |-- IMUDriver
+    |-- SerialDriver
+    `-- ConsoleDriver
+        |
+        v
 Hardware
 ```
 
-Dependency berikut **dilarang**:
+## 4. Why There Is No MotionService
+
+Architecture ini sengaja tidak memakai `MotionService` sebagai facade aktif.
+
+Alasannya:
+
+- motion state machine adalah runtime behavior,
+- command sequencing adalah responsibility Task/Logic,
+- completion rule dan fail-safe adalah control flow,
+- periodic update harus jelas berada di loop task,
+- service sebaiknya pasif agar tetap menjadi bahasa stabil di atas driver.
+
+Jadi motion logic berada di:
 
 ```text
-Driver      → Service
-Driver      → Logic
-
-Service     → Logic
-
-Application → Driver
-Application → PIDController
-Application → IMUDriver
-Application → MotorEncoderDriver
-
-Task        → Hardware Driver
+main/logic/motion_control/
 ```
 
-Service boleh menggunakan service lain **hanya jika hubungan tersebut sudah ditentukan secara eksplisit oleh architecture**.
+Bukan di service.
 
----
+## 5. Application Layer
 
-# 5. Application Layer
-
-Application Layer hanya mendeskripsikan mission atau command yang diinginkan.
+Application hanya menghasilkan command level tinggi.
 
 Contoh:
 
 ```cpp
-Mission::pushMove(1.0f, 1.0f);
-Mission::pushTurn(90.0f);
-Mission::pushMove(2.0f, 0.5f);
+Mission::enqueueDemoMission(motionQueue);
 ```
 
-Application tidak mengetahui:
+Application boleh tahu:
+
+- `MotionCommand`,
+- motion queue,
+- urutan mission.
+
+Application tidak boleh tahu:
 
 - PWM,
-- encoder ticks,
 - GPIO,
 - PCNT,
+- encoder ticks detail,
 - IMU register,
 - PID,
-- UART,
-- heading correction,
-- FreeRTOS synchronization internal,
-- implementation detail motor.
+- motor output,
+- FreeRTOS task internal,
+- driver object.
 
-Application hanya menghasilkan `MotionCommand`.
+Application flow:
 
----
+```text
+Application
+    -> MotionCommandQueue
+```
 
-# 6. Motion Command Model
+## 6. Motion Command Model
 
-Gunakan struktur data bersama pada folder `model`.
-
-Contoh:
+Shared model berada di `main/model`.
 
 ```cpp
 enum class MotionType : uint8_t {
     MOVE_DISTANCE,
     TURN_ANGLE,
-    STOP
+    STOP,
 };
 
 struct MotionCommand {
     MotionType type;
-
     float value;
     float speed;
 };
@@ -214,1706 +169,378 @@ Interpretasi:
 
 ```text
 MOVE_DISTANCE:
-    value = distance meter
-    speed = meter per second
+    value = distance_m
+    speed = speed_mps
 
 TURN_ANGLE:
-    value = relative angle degree
-    speed = optional angular control parameter
+    value = relative angle_deg
+    speed = unused for now
 
 STOP:
     value = unused
     speed = unused
 ```
 
-Contoh mission:
+Sign convention awal:
 
 ```text
-MOVE_DISTANCE
-value = 1.0
-speed = 1.0
+MOVE +distance_m = forward
+MOVE -distance_m = reverse
+TURN +angle_deg = right
+TURN -angle_deg = left
 ```
 
-kemudian:
+## 7. Logic / Task Layer
 
-```text
-TURN_ANGLE
-value = +90.0
-```
-
-kemudian:
-
-```text
-MOVE_DISTANCE
-value = 2.0
-speed = 0.5
-```
-
----
-
-# 7. Logic Layer
-
-Logic Layer berisi FreeRTOS task dan orchestration antar thread.
+Logic layer memiliki flow runtime.
 
 Task utama:
 
 ```text
-ControlTask
-MotionTask
-SerialTask
-TelemetryTask
+logic/motion_control/MotionCommandTask
+logic/motion_control/MotionLoopTask
+logic/SerialTask
+logic/TelemetryTask
 ```
 
-Tidak perlu membuat task terpisah untuk:
+### 7.1 MotionControl Module
+
+Motion control logic berada dalam satu module:
 
 ```text
-EncoderTask
-MotorTask
-PIDTask
-IMUTask
-HeadingTask
-OdometryTask
+main/logic/motion_control/
 ```
 
-Hal tersebut akan menambah synchronization complexity secara tidak perlu.
+Module ini adalah jawaban utama jika ditanya:
 
----
+> Siapa yang handle motion logic?
 
-# 8. ControlTask
+Jawabannya:
 
-## Responsibility
+> Motion control module. Di dalamnya ada satu task event queue dan satu task periodic loop.
 
-`ControlTask` menjalankan control loop periodik.
+### 7.2 MotionCommandTask
 
-ControlTask **hanya boleh memanggil MotionService**.
+`MotionCommandTask` bersifat event-driven.
 
-Contoh:
+Responsibility:
 
-```cpp
-motion.update(dt);
-```
+- wait `MotionCommandQueue`,
+- menerima command dari Application/Serial/Future Navigation,
+- submit command ke `MotionControlContext`,
+- menjaga urutan command,
+- tidak menjalankan PID,
+- tidak membaca driver,
+- tidak menghitung odometry.
 
-ControlTask tidak boleh memanggil:
+Blocking `portMAX_DELAY` diperbolehkan di sini karena task ini memang menunggu event command.
 
-```cpp
-motorDriver.update();
-imuDriver.read();
-headingService.update();
-motorControlService.setVelocity();
-pid.update();
-```
+### 7.3 MotionLoopTask
 
-semua detail tersebut menjadi responsibility dari Service Layer.
+`MotionLoopTask` adalah control loop periodik.
 
-## Suggested Frequency
-
-Initial recommendation:
+Initial rate:
 
 ```text
 100 Hz
-10 ms cycle
-```
-
-Contoh konseptual:
-
-```cpp
-void ControlTask(void* arg)
-{
-    TickType_t lastWake = xTaskGetTickCount();
-
-    while (true)
-    {
-        motionService.update(0.01f);
-
-        vTaskDelayUntil(
-            &lastWake,
-            pdMS_TO_TICKS(10)
-        );
-    }
-}
-```
-
-Final frequency dapat disesuaikan setelah testing motor, encoder, dan IMU.
-
----
-
-# 9. MotionTask
-
-`MotionTask` menangani Motion Command Queue.
-
-Flow:
-
-```text
-Application
-      │
-      ▼
-MotionCommandQueue
-      │
-      ▼
-MotionTask
-      │
-      ▼
-MotionService
-```
-
-MotionTask tidak melakukan PID.
-
-MotionTask tidak menghitung odometry.
-
-MotionTask tidak membaca sensor.
-
-MotionTask hanya:
-
-1. menunggu command,
-2. membaca status MotionService,
-3. mengirim command baru saat MotionService siap.
-
-Concept:
-
-```cpp
-while (true)
-{
-    if (!motionService.isBusy())
-    {
-        if (xQueueReceive(
-            motionQueue,
-            &command,
-            portMAX_DELAY
-        ))
-        {
-            execute(command);
-        }
-    }
-}
-```
-
-Kemudian:
-
-```cpp
-switch (command.type)
-{
-case MotionType::MOVE_DISTANCE:
-    motionService.startMove(
-        command.value,
-        command.speed
-    );
-    break;
-
-case MotionType::TURN_ANGLE:
-    motionService.startTurn(
-        command.value
-    );
-    break;
-
-case MotionType::STOP:
-    motionService.stop();
-    break;
-}
-```
-
----
-
-# 10. SerialTask
-
-SerialTask disiapkan untuk komunikasi dengan ESP32 lain, termasuk kemungkinan node Zigbee.
-
-SerialTask tidak boleh:
-
-```text
-UART → motor
-UART → PWM
-UART → MotionService direct command bypass queue
-```
-
-Flow yang benar:
-
-```text
-External ESP32 / Zigbee
-        │
-       UART
-        │
-        ▼
-    SerialTask
-        │
-        ▼
-CommunicationService
-        │
-        ▼
-parsed MotionCommand
-        │
-        ▼
- MotionCommandQueue
-        │
-        ▼
-    MotionTask
-```
-
-Dengan cara ini sumber command dapat berasal dari:
-
-```text
-Application Mission ─┐
-                     │
-Serial / Zigbee ─────┼──→ MotionCommandQueue
-                     │
-Future Navigation ───┘
-```
-
-Control architecture tidak perlu berubah.
-
----
-
-# 11. TelemetryTask
-
-Semua log yang tidak membutuhkan output immediate harus masuk melalui Telemetry Queue.
-
-Flow:
-
-```text
-Service / Task
-     │
-     │ push telemetry
-     ▼
-TelemetryQueue
-     │
-     ▼
-TelemetryTask
-     │
-     ▼
-TelemetryService
-     │
-     ▼
-ConsoleDriver
-     │
-     ▼
-UART / Console
-```
-
-Control loop tidak boleh menunggu telemetry.
-
-Jika queue penuh, log non-critical boleh dibuang.
-
-Prinsip:
-
-> Telemetry boleh drop. Control cycle tidak boleh terlambat karena telemetry.
-
----
-
-# 12. Service Layer Overview
-
-Service utama:
-
-```text
-Service
-├── MotorControlService
-├── HeadingService
-├── OdometryService
-├── MotionService
-├── CommunicationService
-└── TelemetryService
-```
-
-Helper:
-
-```text
-PIDController
-```
-
-`PIDController` bukan Task.
-
-`PIDController` juga tidak wajib menjadi child dari Service.
-
-Secara konsep:
-
-```text
-MotorControlService
-├── leftSpeedPID
-└── rightSpeedPID
-
-HeadingService
-└── headingPID
-```
-
----
-
-# 13. Base Service
-
-Base class dapat digunakan sebagai interface umum.
-
-Contoh:
-
-```cpp
-class Service {
-public:
-    virtual esp_err_t init() = 0;
-    virtual void reset() = 0;
-
-    virtual ~Service() = default;
-};
-```
-
-Base class tidak boleh memiliki terlalu banyak logic.
-
-Tujuannya hanya memberikan lifecycle/interface yang konsisten.
-
----
-
-# 14. MotorEncoderDriver
-
-Motor dan encoder digabung menjadi satu driver karena merupakan satu subsystem hardware.
-
-Driver:
-
-```text
-MotorEncoderDriver
+10 ms period
 ```
 
 Responsibility:
 
-- configure motor GPIO,
-- configure PWM,
-- configure motor direction,
-- initialize encoder counter,
-- read encoder ticks,
-- calculate or expose encoder raw values,
-- provide motor output command,
-- stop motor hardware.
+- update heading service,
+- refresh motor feedback,
+- update odometry service,
+- start pending command dari context,
+- menjalankan move/turn state handling,
+- menentukan target wheel velocity,
+- memanggil motor control apply,
+- completion detection,
+- fail-safe stop.
 
-Driver tidak mengetahui:
+`MotionLoopTask` boleh memanggil service, tetapi tidak boleh memanggil driver langsung.
 
-- PID,
-- distance meter,
-- heading,
-- turn 90°,
-- MOVE command,
+Control loop menggunakan:
+
+```cpp
+vTaskDelayUntil(...)
+```
+
+### 7.4 MotionControlContext
+
+`MotionControlContext` menyimpan shared motion state antara `MotionCommandTask` dan `MotionLoopTask`.
+
+Isi konsep:
+
+- active state,
+- active command,
+- pending command,
+- stop request,
+- target distance,
+- target speed,
+- start distance,
+- target heading.
+
+Akses context harus thread-safe dengan critical section pendek. Jangan melakukan driver I/O, serial I/O, atau log blocking ketika lock aktif.
+
+## 8. Service Layer
+
+Service adalah component/capability pasif.
+
+Service boleh:
+
+- menggunakan driver yang dimilikinya,
+- menyimpan state internal yang menjadi bagian capability,
+- menghitung unit engineering,
+- menjalankan PID helper,
+- expose API kecil untuk logic.
+
+Service tidak boleh:
+
+- membuat task,
+- punya command queue,
+- memiliki mission sequencing,
+- menjadi motion state machine owner,
+- mengakses driver milik service lain,
+- melakukan delay/busy wait.
+
+### 8.1 MotorControlService
+
+Owner tunggal `MotorEncoderDriver`.
+
+Responsibility:
+
+- refresh encoder/motor feedback,
+- convert RPM/ticks menjadi engineering unit,
+- menyimpan target left/right wheel speed,
+- menjalankan speed PID kiri/kanan,
+- apply output motor via driver,
+- stop motor.
+
+Tidak boleh:
+
+- membaca IMU,
+- tahu `MotionCommandQueue`,
+- menentukan move/turn selesai,
+- menjalankan motion sequencing.
+
+### 8.2 HeadingService
+
+Owner tunggal `IMUDriver`.
+
+Responsibility:
+
+- update heading relatif,
+- expose heading/yaw rate,
+- normalize angle,
+- calculate heading correction dengan PID.
+
+Tidak boleh:
+
+- akses motor driver,
+- menjalankan turn state machine,
+- tahu mission queue.
+
+### 8.3 OdometryService
+
+Pure computational service.
+
+Tidak punya driver.
+
+Input diberikan oleh Logic dari data service lain:
+
+```cpp
+updateOdometry(left_ticks, right_ticks, heading_deg);
+```
+
+Responsibility:
+
+- hitung travelled distance,
+- hitung `Pose2D`,
+- reset odometry state.
+
+### 8.4 PIDController
+
+Helper generic.
+
+Tidak tahu:
+
+- motor,
+- encoder,
+- IMU,
+- degree,
 - navigation,
-- odometry pose.
+- task.
 
-Concept interface:
+Wajib ada:
 
-```cpp
-class MotorEncoderDriver {
-public:
-    esp_err_t init();
+- output clamp,
+- integral clamp,
+- reset.
 
-    void setLeftOutput(float output);
-    void setRightOutput(float output);
+### 8.5 CommunicationService
 
-    int32_t getLeftTicks() const;
-    int32_t getRightTicks() const;
-
-    float getLeftRPM() const;
-    float getRightRPM() const;
-
-    void stop();
-};
-```
-
----
-
-# 15. One Driver — One Service Rule
-
-Satu driver hanya boleh diakses oleh satu service.
-
-## Motor / Encoder
-
-```text
-MotorEncoderDriver
-       │
-       ▼
-MotorControlService
-```
-
-Hanya `MotorControlService` yang boleh memiliki reference/pointer ke `MotorEncoderDriver`.
-
-Tidak boleh:
-
-```text
-MotorEncoderDriver
-   ├── MotorControlService
-   ├── OdometryService
-   └── MotionService
-```
-
----
-
-# 16. IMU Driver
-
-Driver:
-
-```text
-IMUDriver
-```
+Owner tunggal `SerialDriver`.
 
 Responsibility:
 
-- initialize I2C/SPI sensor,
-- read gyro,
-- read accelerometer jika diperlukan,
-- read magnetometer jika tersedia,
-- expose raw/calibrated sensor values.
+- parse protocol/frame external command,
+- validate command format,
+- menghasilkan `MotionCommand`.
 
-IMUDriver tidak melakukan:
+Tidak boleh langsung mengontrol motor.
 
-- turn state machine,
-- heading PID,
-- motion command,
-- motor correction.
+### 8.6 TelemetryService
 
-Ownership:
-
-```text
-IMUDriver
-    │
-    ▼
-HeadingService
-```
-
-Hanya `HeadingService` yang boleh mengakses IMUDriver.
-
----
-
-# 17. Sensor Heading Strategy
-
-Untuk indoor mini car, magnetometer tidak disarankan sebagai satu-satunya heading source karena dapat terganggu oleh:
-
-- motor DC,
-- permanent magnet pada motor,
-- kabel arus tinggi,
-- rangka logam,
-- meja atau struktur besi,
-- perangkat elektronik sekitar.
-
-Recommended architecture:
-
-```text
-Gyroscope
-   +
-Encoder information
-   +
-optional magnetometer correction
-        │
-        ▼
-HeadingService
-```
-
-Pada implementasi awal, gyroscope yaw dapat menjadi sumber utama heading relatif.
-
----
-
-# 18. MotorControlService
-
-`MotorControlService` adalah satu-satunya service yang berkomunikasi dengan `MotorEncoderDriver`.
-
-Structure:
-
-```text
-MotorControlService
-│
-├── MotorEncoderDriver&
-│
-├── PIDController leftSpeedPID
-│
-└── PIDController rightSpeedPID
-```
+Owner tunggal `ConsoleDriver`.
 
 Responsibility:
 
-- convert wheel target velocity menjadi motor command,
-- membaca feedback encoder melalui driver,
-- menghitung actual wheel velocity,
-- menjalankan PID roda kiri,
-- menjalankan PID roda kanan,
-- expose encoder/velocity state ke MotionService.
+- format telemetry message,
+- publish via console driver.
 
-Concept:
+Telemetry tetap asynchronous melalui `TelemetryTask` dan `TelemetryQueue`.
 
-```cpp
-class MotorControlService : public Service {
-protected:
-    MotorEncoderDriver& driver_;
+## 9. Driver Layer
 
-    PIDController leftSpeedPID_;
-    PIDController rightSpeedPID_;
+Driver hanya hardware.
 
-    void setVelocity(
-        float leftMps,
-        float rightMps
-    );
+Driver boleh:
 
-    void updateMotorControl(float dt);
+- configure GPIO,
+- configure LEDC/PWM,
+- configure PCNT,
+- configure UART,
+- configure I2C/SPI,
+- read/write peripheral,
+- expose raw/hardware-near data.
 
-    float getLeftVelocity() const;
-    float getRightVelocity() const;
+Driver tidak boleh:
 
-    int32_t getLeftTicks() const;
-    int32_t getRightTicks() const;
+- menjalankan PID,
+- membaca `MotionCommand`,
+- membuat queue,
+- menjalankan motion state machine,
+- menentukan target distance/heading,
+- menyimpan mission.
 
-    void stopMotor();
-};
-```
+Driver skeleton saat ini disediakan sebagai kontrak API. Implementasi hardware detail dikerjakan setelah pin/peripheral final jelas.
 
-Methods yang hanya digunakan oleh `MotionService` sebaiknya dibuat `protected`.
+## 10. Ownership Rule
 
----
-
-# 19. Speed PID
-
-Mini car differential drive memiliki dua wheel velocity controller.
+Satu driver hanya dimiliki satu service.
 
 ```text
-Target Left Velocity
-        │
-        ▼
-    Left PID
-        │
-        ▼
- Left Motor PWM
-        │
-        ▼
- Left Encoder
-        │
-        └──── feedback
-
-
-Target Right Velocity
-        │
-        ▼
-    Right PID
-        │
-        ▼
-Right Motor PWM
-        │
-        ▼
-Right Encoder
-        │
-        └──── feedback
+MotorEncoderDriver -> MotorControlService
+IMUDriver          -> HeadingService
+SerialDriver       -> CommunicationService
+ConsoleDriver      -> TelemetryService
 ```
 
-PID berada di Service Layer.
-
-PID bukan Task.
-
----
-
-# 20. PIDController Helper
-
-PID dibuat reusable dan tidak mengetahui motor maupun heading.
-
-Contoh:
-
-```cpp
-class PIDController {
-public:
-    PIDController(
-        float kp,
-        float ki,
-        float kd
-    );
-
-    float update(
-        float setpoint,
-        float measurement,
-        float dt
-    );
-
-    void reset();
-
-    void setOutputLimit(
-        float minOutput,
-        float maxOutput
-    );
-};
-```
-
-MotorControlService dapat memiliki:
-
-```cpp
-PIDController leftSpeedPID_;
-PIDController rightSpeedPID_;
-```
-
-HeadingService dapat memiliki:
-
-```cpp
-PIDController headingPID_;
-```
-
----
-
-# 21. HeadingService
-
-`HeadingService` adalah satu-satunya service yang mengakses IMUDriver.
-
-Structure:
+Dilarang:
 
 ```text
-HeadingService
-│
-├── IMUDriver&
-│
-└── PIDController headingPID
+MotionLoopTask -> MotorEncoderDriver
+TelemetryTask  -> MotorEncoderDriver
+OdometryService -> MotorEncoderDriver
 ```
 
-Responsibility:
+## 11. Queue Architecture
 
-- membaca sensor heading,
-- menghitung heading relative,
-- menangani angle normalization,
-- memberikan current heading,
-- menghitung heading correction,
-- melakukan reset heading reference.
-
-Concept:
-
-```cpp
-class HeadingService : public Service {
-protected:
-    IMUDriver& imu_;
-
-    PIDController headingPID_;
-
-    void updateHeading(float dt);
-
-    float getHeading() const;
-
-    float calculateHeadingCorrection(
-        float targetHeading,
-        float dt
-    );
-
-    void resetHeadingReference();
-};
-```
-
----
-
-# 22. Heading Normalization
-
-Angle harus dinormalisasi agar error tidak salah saat melewati 0° / 360°.
-
-Contoh:
-
-```text
-Current = 359°
-Target  = 1°
-```
-
-Error seharusnya:
-
-```text
-+2°
-```
-
-bukan:
-
-```text
--358°
-```
-
-Gunakan helper normalization ke range seperti:
-
-```text
-[-180°, +180°]
-```
-
----
-
-# 23. OdometryService
-
-OdometryService adalah pure computational service.
-
-OdometryService **tidak memiliki driver**.
-
-Input berasal dari MotionService.
-
-Concept:
-
-```cpp
-class OdometryService : public Service {
-protected:
-    void updateOdometry(
-        int32_t leftTicks,
-        int32_t rightTicks,
-        float heading
-    );
-
-    float getDistance() const;
-
-    Pose2D getPose() const;
-
-    void resetOdometry();
-};
-```
-
-Flow:
-
-```text
-MotorEncoderDriver
-       │
-       ▼
-MotorControlService
-       │
-       │ encoder state
-       ▼
-MotionService
-       │
-       ▼
-OdometryService
-```
-
-Heading:
-
-```text
-IMUDriver
-   │
-   ▼
-HeadingService
-   │
-   ▼
-MotionService
-   │
-   ▼
-OdometryService
-```
-
-Tidak boleh:
-
-```text
-OdometryService ───→ MotorEncoderDriver
-```
-
----
-
-# 24. Pose2D
-
-Odometry dapat menyimpan:
-
-```cpp
-struct Pose2D {
-    float x;
-    float y;
-    float heading;
-};
-```
-
-Walaupun navigation belum menjadi fokus saat ini, abstraction ini disiapkan agar architecture tidak perlu diubah ketika sistem berkembang.
-
----
-
-# 25. MotionService
-
-`MotionService` adalah facade utama seluruh motion subsystem.
-
-Public API harus sederhana.
-
-Contoh:
-
-```cpp
-class MotionService :
-    protected MotorControlService,
-    protected HeadingService,
-    protected OdometryService
-{
-public:
-    esp_err_t init();
-
-    void update(float dt);
-
-    bool startMove(
-        float distanceMeter,
-        float speedMps
-    );
-
-    bool startTurn(
-        float angleDegree
-    );
-
-    void stop();
-
-    bool isBusy() const;
-    bool isCompleted() const;
-
-    MotionState getState() const;
-};
-```
-
-Protected inheritance digunakan agar low-level API tidak terekspos ke application/task.
-
-Contoh yang **tidak boleh bisa dilakukan dari luar**:
-
-```cpp
-motionService.setVelocity(...);
-motionService.updateOdometry(...);
-motionService.calculateHeadingCorrection(...);
-```
-
-Public API cukup berupa motion-level command.
-
----
-
-# 26. Why MotionService Is Not a God Class
-
-MotionService bukan tempat implementasi semua algoritma.
-
-MotionService hanya:
-
-1. orchestration,
-2. motion state machine,
-3. menghubungkan output antar service,
-4. menentukan target sesuai motion state.
-
-Jangan membuat:
-
-```cpp
-void MotionService::update()
-{
-    // 500 lines:
-    // read encoder
-    // calculate RPM
-    // calculate PID
-    // read IMU
-    // integrate gyro
-    // heading PID
-    // odometry
-    // state machine
-    // PWM
-    // logging
-}
-```
-
-Gunakan:
-
-```cpp
-void MotionService::update(float dt)
-{
-    updateHeading(dt);
-
-    updateOdometryState();
-
-    updateMotionState(dt);
-
-    updateMotorControl(dt);
-}
-```
-
-Masing-masing detail tetap berada di service/helper yang sesuai.
-
----
-
-# 27. Motion State Machine
-
-Recommended states:
-
-```cpp
-enum class MotionState : uint8_t {
-    IDLE,
-    MOVING,
-    TURNING,
-    STOPPING,
-    COMPLETED,
-    ERROR
-};
-```
-
-Possible transition:
-
-```text
-          ┌─────────┐
-          │  IDLE   │
-          └────┬────┘
-               │ command
-        ┌──────┴──────┐
-        ▼             ▼
-    MOVING          TURNING
-        │             │
-        │ target done │ target done
-        └──────┬──────┘
-               ▼
-          COMPLETED
-               │
-               ▼
-             IDLE
-```
-
-Emergency stop dapat mengarah ke:
-
-```text
-STOPPING
-```
-
-Error dapat mengarah ke:
-
-```text
-ERROR
-```
-
----
-
-# 28. Move Distance Control
-
-Saat command:
-
-```text
-MOVE 1 meter @ 1 meter/second
-```
-
-MotionService:
-
-1. reset/start distance reference,
-2. capture initial heading,
-3. save target distance,
-4. save target speed,
-5. change state to `MOVING`.
-
-Saat setiap update:
-
-```text
-Current Heading
-      │
-      ▼
-Heading PID
-      │
-      ▼
-steering correction
-      │
-      ├───────────────┐
-      ▼               ▼
-Left target       Right target
-velocity          velocity
-      │               │
-      ▼               ▼
-Left Speed PID    Right Speed PID
-      │               │
-      ▼               ▼
-Motor Left        Motor Right
-```
-
-Example:
-
-```text
-base velocity = 1.0 m/s
-
-heading correction = 0.08 m/s
-
-left target  = 0.92 m/s
-right target = 1.08 m/s
-```
-
-Exact sign convention mengikuti motor orientation.
-
----
-
-# 29. Cascade Control
-
-Recommended structure:
-
-```text
-                 Heading Target
-                       │
-                       ▼
-                  Heading PID
-                       │
-                       ▼
-              Steering Correction
-                  /           \
-                 /             \
-                ▼               ▼
-        Left Velocity      Right Velocity
-             Target             Target
-                │                 │
-                ▼                 ▼
-         Left Speed PID     Right Speed PID
-                │                 │
-                ▼                 ▼
-          Left Motor         Right Motor
-```
-
-Heading control adalah outer loop.
-
-Wheel speed control adalah inner loop.
-
----
-
-# 30. Turn Control
-
-Untuk differential drive, initial implementation dapat menggunakan pivot turn:
-
-```text
-Left wheel  → forward
-Right wheel → reverse
-```
-
-atau sebaliknya.
-
-Saat `TURN +90°`:
-
-```text
-initial heading = current heading
-target heading  = initial + 90°
-```
-
-Heading PID menentukan turn command.
-
-Semakin dekat dengan target, command harus berkurang agar overshoot lebih kecil.
-
-Turn selesai jika kondisi seperti berikut terpenuhi:
-
-```text
-abs(angle_error) < angle_tolerance
-AND
-abs(yaw_rate) < angular_velocity_tolerance
-```
-
-Dengan demikian mobil tidak dianggap selesai hanya karena melewati target sesaat.
-
----
-
-# 31. Motion Update Flow
-
-Control cycle:
-
-```text
-ControlTask
-     │
-     ▼
-MotionService::update(dt)
-     │
-     ├── updateHeading(dt)
-     │       │
-     │       └── HeadingService → IMUDriver
-     │
-     ├── collect encoder state
-     │       │
-     │       └── MotorControlService → MotorEncoderDriver
-     │
-     ├── updateOdometry(...)
-     │       │
-     │       └── OdometryService
-     │
-     ├── updateMotionState(dt)
-     │       │
-     │       ├── MOVING
-     │       ├── TURNING
-     │       ├── STOPPING
-     │       └── IDLE
-     │
-     └── updateMotorControl(dt)
-             │
-             └── MotorControlService
-```
-
----
-
-# 32. Complete Dependency Tree
-
-```text
-                         Application
-                             │
-                             ▼
-                      MotionCommandQueue
-                             │
-                             ▼
-                         MotionTask
-                             │
-                             ▼
-                      MotionService
-                             │
-          ┌──────────────────┼──────────────────┐
-          │                  │                  │
-          ▼                  ▼                  ▼
- MotorControlService    HeadingService    OdometryService
-          │                  │
-          ▼                  ▼
- MotorEncoderDriver        IMUDriver
-```
-
-Auxiliary branch:
-
-```text
-External ESP32
-     │
-     ▼
-SerialDriver
-     │
-     ▼
-CommunicationService
-     │
-     ▼
-SerialTask
-     │
-     ▼
-MotionCommandQueue
-```
-
-Telemetry:
-
-```text
-Any allowed producer
-        │
-        ▼
-TelemetryQueue
-        │
-        ▼
-TelemetryTask
-        │
-        ▼
-TelemetryService
-        │
-        ▼
-ConsoleDriver
-```
-
-Control:
-
-```text
-ControlTask
-     │
-     └────→ MotionService::update(dt)
-```
-
----
-
-# 33. Queue Architecture
-
-Recommended queues:
+Queue utama:
 
 ```text
 MotionCommandQueue
 TelemetryQueue
 ```
 
-Optional future queues:
+Motion command flow:
 
 ```text
-CommunicationRxQueue
-NavigationCommandQueue
-SystemEventQueue
+Application / Serial / Future Navigation
+    -> MotionCommandQueue
+    -> MotionCommandTask
+    -> MotionControlContext
+    -> MotionLoopTask
+    -> Services
+    -> Drivers
 ```
 
-Jangan membuat queue jika direct synchronous call masih lebih sederhana dan aman.
+Telemetry flow:
 
-Queue digunakan terutama saat data berpindah antar Task.
+```text
+Producer
+    -> TelemetryQueue
+    -> TelemetryTask
+    -> TelemetryService
+    -> ConsoleDriver
+```
 
----
-
-# 34. Telemetry Message
-
-Hindari penggunaan string besar dan dynamic allocation.
-
-Recommended:
+Telemetry producer high-priority harus non-blocking:
 
 ```cpp
-enum class LogLevel : uint8_t {
-    DEBUG,
-    INFO,
-    WARNING,
-    ERROR
-};
-
-struct TelemetryMessage {
-    uint32_t timestamp;
-    LogLevel level;
-
-    char tag[16];
-    char message[96];
-};
+xQueueSend(queue, &message, 0);
 ```
 
-Approximate size sekitar 120 byte tergantung alignment.
+## 12. Startup Flow
 
-Dengan queue 20 item:
+`app_main()` melakukan:
 
-```text
-~2.4 KB
-```
+1. create drivers,
+2. create services dengan dependency injection,
+3. create `MotionControlContext`,
+4. create queues,
+5. init services,
+6. create tasks,
+7. enqueue optional demo mission.
 
-Dengan queue 50 item:
-
-```text
-~6 KB
-```
-
-Masih masuk akal untuk ESP32 DevKit V1 selama task stack dan subsystem lain juga dikontrol.
-
----
-
-# 35. Telemetry Non-Blocking Rule
-
-Producer sebaiknya menggunakan:
-
-```cpp
-xQueueSend(
-    telemetryQueue,
-    &message,
-    0
-);
-```
-
-Jika queue penuh:
-
-```text
-drop DEBUG/INFO telemetry
-```
-
-Jangan menggunakan:
-
-```cpp
-portMAX_DELAY
-```
-
-dari ControlTask.
-
-Critical system fault dapat memiliki jalur berbeda jika diperlukan.
-
----
-
-# 36. FreeRTOS Priority Concept
-
-Initial suggestion:
-
-```text
-ControlTask       highest application priority
-MotionTask        medium-high
-SerialTask        medium
-TelemetryTask     low
-```
-
-Contoh awal:
-
-```text
-ControlTask     priority 10
-MotionTask      priority 7
-SerialTask      priority 5
-TelemetryTask   priority 2
-```
-
-Nilai final harus diverifikasi bersama task ESP-IDF internal dan subsystem lain.
-
----
-
-# 37. Suggested Task Rates
-
-Initial suggestion:
-
-```text
-ControlTask
-    100 Hz
-
-MotionTask
-    event-driven / queue-based
-
-SerialTask
-    event-driven or blocking UART receive
-
-TelemetryTask
-    queue-driven
-```
-
-MotionTask tidak perlu polling cepat jika dapat menggunakan Event/Queue synchronization.
-
----
-
-# 38. Thread Safety
-
-Karena MotionTask dan ControlTask sama-sama mengakses MotionService:
-
-```text
-MotionTask
-    └── startMove / startTurn / stop
-
-ControlTask
-    └── update
-```
-
-shared state harus dirancang dengan hati-hati.
-
-Pilihan implementasi:
-
-1. critical section kecil,
-2. mutex,
-3. atomic field,
-4. internal command handoff.
-
-Preferensi:
-
-- hindari mutex lama di ControlTask,
-- critical section harus sesingkat mungkin,
-- jangan melakukan blocking I/O saat lock aktif.
-
----
-
-# 39. Configuration Layer
-
-Semua hardware dan tuning parameter tidak boleh tersebar sebagai magic number.
-
-Gunakan:
-
-```text
-config/
-├── RobotConfig.hpp
-├── PIDConfig.hpp
-└── FreeRTOSConfig.hpp
-```
-
-Contoh `RobotConfig.hpp`:
-
-```cpp
-namespace RobotConfig {
-
-constexpr float WHEEL_DIAMETER_M = ...;
-constexpr float WHEEL_BASE_M = ...;
-constexpr int ENCODER_TICKS_PER_REV = ...;
-
-}
-```
-
-PID:
-
-```cpp
-namespace PIDConfig {
-
-constexpr float SPEED_KP = ...;
-constexpr float SPEED_KI = ...;
-constexpr float SPEED_KD = ...;
-
-constexpr float HEADING_KP = ...;
-constexpr float HEADING_KI = ...;
-constexpr float HEADING_KD = ...;
-
-}
-```
-
----
-
-# 40. Recommended Folder Tree
+## 13. Folder Tree
 
 ```text
 main/
-│
-├── app_main.cpp
-│
-├── application/
-│   ├── Mission.cpp
-│   └── Mission.hpp
-│
-├── logic/
-│   ├── ControlTask.cpp
-│   ├── ControlTask.hpp
-│   ├── MotionTask.cpp
-│   ├── MotionTask.hpp
-│   ├── SerialTask.cpp
-│   ├── SerialTask.hpp
-│   ├── TelemetryTask.cpp
-│   └── TelemetryTask.hpp
-│
-├── service/
-│   ├── base/
-│   │   └── Service.hpp
-│   │
-│   ├── control/
-│   │   ├── PIDController.cpp
-│   │   └── PIDController.hpp
-│   │
-│   ├── motion/
-│   │   ├── MotionService.cpp
-│   │   └── MotionService.hpp
-│   │
-│   ├── motor/
-│   │   ├── MotorControlService.cpp
-│   │   └── MotorControlService.hpp
-│   │
-│   ├── heading/
-│   │   ├── HeadingService.cpp
-│   │   └── HeadingService.hpp
-│   │
-│   ├── odometry/
-│   │   ├── OdometryService.cpp
-│   │   └── OdometryService.hpp
-│   │
-│   ├── telemetry/
-│   │   ├── TelemetryService.cpp
-│   │   └── TelemetryService.hpp
-│   │
-│   └── communication/
-│       ├── CommunicationService.cpp
-│       └── CommunicationService.hpp
-│
-├── driver/
-│   ├── motor/
-│   │   ├── MotorEncoderDriver.cpp
-│   │   └── MotorEncoderDriver.hpp
-│   │
-│   ├── imu/
-│   │   ├── IMUDriver.cpp
-│   │   └── IMUDriver.hpp
-│   │
-│   ├── telemetry/
-│   │   ├── ConsoleDriver.cpp
-│   │   └── ConsoleDriver.hpp
-│   │
-│   └── communication/
-│       ├── SerialDriver.cpp
-│       └── SerialDriver.hpp
-│
-├── model/
-│   ├── MotionCommand.hpp
-│   ├── MotionState.hpp
-│   ├── TelemetryMessage.hpp
-│   ├── RobotState.hpp
-│   └── Pose2D.hpp
-│
-└── config/
-    ├── RobotConfig.hpp
-    ├── PIDConfig.hpp
-    └── FreeRTOSConfig.hpp
+|-- app_main.cpp
+|-- application/
+|-- logic/
+|   |-- motion_control/
+|   |   |-- MotionCommandTask.*
+|   |   |-- MotionLoopTask.*
+|   |   `-- MotionControlContext.*
+|   |-- SerialTask.*
+|   `-- TelemetryTask.*
+|-- service/
+|-- driver/
+|-- model/
+`-- config/
 ```
 
----
-
-# 41. Future ESP-IDF Components
-
-Setelah project stabil, folder dapat dipindahkan menjadi native ESP-IDF components:
-
-```text
-project/
-│
-├── main/
-│   └── app_main.cpp
-│
-└── components/
-    ├── logic/
-    ├── motion_service/
-    ├── motor_service/
-    ├── heading_service/
-    ├── odometry_service/
-    ├── telemetry_service/
-    ├── communication_service/
-    ├── motor_encoder_driver/
-    └── imu_driver/
-```
-
-Tahap awal boleh menggunakan satu component `main` agar development lebih cepat.
-
----
-
-# 42. Startup Flow
-
-Recommended startup:
-
-```text
-app_main()
-   │
-   ├── create hardware drivers
-   │
-   ├── create services
-   │
-   ├── initialize MotionService hierarchy
-   │
-   ├── create queues
-   │
-   ├── create tasks
-   │
-   └── enqueue initial mission
-```
-
-Setelah scheduler aktif:
-
-```text
-ControlTask
-    └── continuously updates motion
-
-MotionTask
-    └── waits for motion commands
-
-SerialTask
-    └── waits for external communication
-
-TelemetryTask
-    └── waits for logs
-```
-
----
-
-# 43. Example Mission Flow
-
-Mission:
-
-```text
-1. Move 1 meter @ 1 m/s
-2. Turn right 90°
-3. Move 2 meter @ 0.5 m/s
-```
-
-Application:
-
-```text
-push MOVE(1.0, 1.0)
-push TURN(+90)
-push MOVE(2.0, 0.5)
-```
-
-MotionTask consumes first command.
-
-MotionService:
-
-```text
-state = MOVING
-target_distance = 1.0
-target_speed = 1.0
-heading_target = current_heading
-```
-
-ControlTask continuously calls:
-
-```text
-MotionService.update()
-```
-
-MotionService:
-
-```text
-heading update
-        ↓
-encoder feedback
-        ↓
-odometry update
-        ↓
-heading correction
-        ↓
-wheel targets
-        ↓
-speed PID
-        ↓
-motor output
-```
-
-Saat distance selesai:
-
-```text
-state = COMPLETED
-```
-
-MotionTask mengambil:
-
-```text
-TURN(+90)
-```
-
-dan seterusnya.
-
----
-
-# 44. Error Handling Concept
-
-Service sebaiknya dapat melaporkan:
-
-```text
-NOT_INITIALIZED
-SENSOR_ERROR
-ENCODER_ERROR
-CONTROL_ERROR
-INVALID_COMMAND
-TIMEOUT
-```
-
-Gunakan `esp_err_t` untuk initialization/hardware lifecycle jika sesuai.
-
-Runtime state dapat memakai enum internal.
-
-MotionService dapat berpindah ke:
-
-```text
-MotionState::ERROR
-```
-
-dan memerintahkan motor stop.
-
----
-
-# 45. Safety Defaults
+## 14. Safety Defaults
 
 Jika terjadi:
 
-- IMU tidak terbaca,
-- encoder invalid,
-- control timeout,
-- motion command invalid,
-- internal service error,
+- driver belum siap,
+- command invalid,
+- dt invalid,
+- IMU/motor feedback tidak valid,
+- control path error,
 
-default behavior:
+maka default behavior:
 
 ```text
 STOP MOTOR
+set ERROR or IDLE according to condition
 ```
 
-Jangan mempertahankan PWM terakhir tanpa valid feedback.
+Jangan mempertahankan output motor terakhir tanpa feedback valid.
 
----
+## 15. Architecture Summary
 
-# 46. Architecture Summary
-
-Architecture final:
+Final rule:
 
 ```text
-Application
-    │
-    ▼
-MotionCommandQueue
-    │
-    ▼
-MotionTask
-    │
-    ▼
-MotionService
-    │
-    ├── MotorControlService
-    │       │
-    │       ├── Left Speed PID
-    │       ├── Right Speed PID
-    │       │
-    │       ▼
-    │   MotorEncoderDriver
-    │
-    ├── HeadingService
-    │       │
-    │       ├── Heading PID
-    │       │
-    │       ▼
-    │     IMUDriver
-    │
-    └── OdometryService
-            │
-            └── pure computation
+Application defines intent.
+Logic/Task owns runtime behavior.
+Service provides passive capability.
+Driver touches hardware.
 ```
 
-Parallel infrastructure:
-
-```text
-ControlTask
-    └── MotionService.update()
-
-SerialTask
-    └── CommunicationService
-            └── SerialDriver
-                    ↓
-             MotionCommandQueue
-
-Telemetry producers
-    ↓
-TelemetryQueue
-    ↓
-TelemetryTask
-    ↓
-TelemetryService
-    ↓
-ConsoleDriver
-```
-
-Core principle:
-
-> One entry point for motion.  
-> One service owner per driver.  
-> No direct hardware access outside its owning service.  
-> Logic schedules.  
-> Service controls.  
-> Driver talks to hardware.
+Tidak ada `MotionService` aktif. Motion logic berada di `logic/motion_control`.
