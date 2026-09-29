@@ -17,6 +17,12 @@ C++
 FreeRTOS
 ```
 
+Untuk detail kontrak Driver Layer dan handoff ke Aranda, baca juga:
+
+```text
+docs/MINICAR_DRIVER_SYSTEM.md
+```
+
 ## 1. Current Architecture Decision
 
 Tidak menggunakan `MotionService` sebagai facade aktif.
@@ -187,7 +193,8 @@ Context harus memakai critical section pendek. Jangan menjalankan I/O saat lock.
 Owner:
 
 ```text
-MotorEncoderDriver
+Left MotorEncoderDriver
+Right MotorEncoderDriver
 ```
 
 API concept:
@@ -205,10 +212,11 @@ getRightVelocityMps();
 
 Tugas:
 
-- convert RPM/ticks ke unit service,
+- convert RPM/ticks kiri dan kanan ke unit service,
 - speed PID kiri/kanan,
 - clamp output,
-- stop motor.
+- kirim output ke driver kiri dan kanan,
+- stop kedua motor.
 
 ### HeadingService
 
@@ -278,7 +286,8 @@ Untuk Aranda:
 Driver skeleton yang perlu diisi:
 
 ```text
-MotorEncoderDriver
+Left MotorEncoderDriver
+Right MotorEncoderDriver
 IMUDriver
 SerialDriver
 ConsoleDriver jika perlu dedicated UART
@@ -413,6 +422,12 @@ When editing:
 - keep CMake source list updated,
 - keep docs consistent if architecture changes again.
 
+Driver-specific notes and acceptance output are documented in:
+
+```text
+docs/MINICAR_DRIVER_SYSTEM.md
+```
+
 ## 12. Next Driver Work
 
 ### MotorEncoderDriver
@@ -422,10 +437,10 @@ Needs:
 - motor direction pin setup,
 - PWM/LEDC setup,
 - encoder counter setup,
-- output clamp/application,
-- left/right ticks,
-- left/right RPM,
-- safe stop.
+- output clamp/application untuk satu motor,
+- ticks untuk satu encoder,
+- RPM untuk satu motor,
+- safe stop untuk satu motor.
 
 ### IMUDriver
 

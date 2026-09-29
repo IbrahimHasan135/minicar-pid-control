@@ -204,7 +204,8 @@ Pisahkan sesuai layer.
 Satu driver hanya boleh diakses oleh satu service:
 
 ```text
-MotorEncoderDriver -> MotorControlService
+Left MotorEncoderDriver  -> MotorControlService
+Right MotorEncoderDriver -> MotorControlService
 IMUDriver          -> HeadingService
 SerialDriver       -> CommunicationService
 ConsoleDriver      -> TelemetryService

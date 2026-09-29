@@ -4,51 +4,32 @@ namespace minicar::driver {
 
 esp_err_t MotorEncoderDriver::init()
 {
-    // TODO(Aranda): configure motor GPIO, LEDC/PWM, direction pins, and encoder counters.
+    // TODO(Aranda): configure this motor GPIO, PWM, direction pins, and encoder counter.
     return ESP_ERR_NOT_SUPPORTED;
 }
 
-void MotorEncoderDriver::setLeftOutput(float output)
+void MotorEncoderDriver::setOutput(float output)
 {
-    // TODO(Aranda): apply left motor output to hardware.
-    left_output_ = output;
+    // TODO(Aranda): apply this motor output to hardware.
+    output_ = output;
 }
 
-void MotorEncoderDriver::setRightOutput(float output)
+int32_t MotorEncoderDriver::getTicks() const
 {
-    // TODO(Aranda): apply right motor output to hardware.
-    right_output_ = output;
-}
-
-int32_t MotorEncoderDriver::getLeftTicks() const
-{
-    // TODO(Aranda): return left encoder counter.
+    // TODO(Aranda): return this motor encoder counter.
     return 0;
 }
 
-int32_t MotorEncoderDriver::getRightTicks() const
+float MotorEncoderDriver::getRPM() const
 {
-    // TODO(Aranda): return right encoder counter.
-    return 0;
-}
-
-float MotorEncoderDriver::getLeftRPM() const
-{
-    // TODO(Aranda): return left wheel RPM from encoder feedback.
-    return 0.0f;
-}
-
-float MotorEncoderDriver::getRightRPM() const
-{
-    // TODO(Aranda): return right wheel RPM from encoder feedback.
+    // TODO(Aranda): return this motor wheel RPM from encoder feedback.
     return 0.0f;
 }
 
 void MotorEncoderDriver::stop()
 {
-    left_output_ = 0.0f;
-    right_output_ = 0.0f;
-    // TODO(Aranda): force both motor outputs to a safe stop state.
+    output_ = 0.0f;
+    // TODO(Aranda): force this motor output to a safe stop state.
 }
 
 }  // namespace minicar::driver
