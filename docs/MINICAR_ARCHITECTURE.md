@@ -83,7 +83,8 @@ Service Layer
         |
         v
 Driver Layer
-    |-- MotorEncoderDriver
+    |-- Left MotorEncoderDriver
+    |-- Right MotorEncoderDriver
     |-- IMUDriver
     |-- SerialDriver
     `-- ConsoleDriver
@@ -306,16 +307,16 @@ Service tidak boleh:
 
 ### 8.1 MotorControlService
 
-Owner tunggal `MotorEncoderDriver`.
+Owner tunggal dua `MotorEncoderDriver`: satu untuk motor kiri dan satu untuk motor kanan.
 
 Responsibility:
 
-- refresh encoder/motor feedback,
+- refresh feedback dari driver motor kiri dan kanan,
 - convert RPM/ticks menjadi engineering unit,
 - menyimpan target left/right wheel speed,
 - menjalankan speed PID kiri/kanan,
-- apply output motor via driver,
-- stop motor.
+- apply output ke masing-masing driver motor,
+- stop kedua motor.
 
 Tidak boleh:
 
@@ -426,12 +427,19 @@ Driver tidak boleh:
 
 Driver skeleton saat ini disediakan sebagai kontrak API. Implementasi hardware detail dikerjakan setelah pin/peripheral final jelas.
 
+Catatan detail untuk developer driver ada di:
+
+```text
+docs/MINICAR_DRIVER_SYSTEM.md
+```
+
 ## 10. Ownership Rule
 
 Satu driver hanya dimiliki satu service.
 
 ```text
-MotorEncoderDriver -> MotorControlService
+Left MotorEncoderDriver  -> MotorControlService
+Right MotorEncoderDriver -> MotorControlService
 IMUDriver          -> HeadingService
 SerialDriver       -> CommunicationService
 ConsoleDriver      -> TelemetryService
@@ -440,9 +448,9 @@ ConsoleDriver      -> TelemetryService
 Dilarang:
 
 ```text
-MotionLoopTask -> MotorEncoderDriver
-TelemetryTask  -> MotorEncoderDriver
-OdometryService -> MotorEncoderDriver
+MotionLoopTask  -> Left/Right MotorEncoderDriver
+TelemetryTask   -> Left/Right MotorEncoderDriver
+OdometryService -> Left/Right MotorEncoderDriver
 ```
 
 ## 11. Queue Architecture

@@ -11,7 +11,9 @@ namespace minicar::service {
 
 class MotorControlService : public Service {
 public:
-    explicit MotorControlService(driver::MotorEncoderDriver& driver);
+    MotorControlService(
+        driver::MotorEncoderDriver& left_driver,
+        driver::MotorEncoderDriver& right_driver);
 
     esp_err_t init() override;
     void reset() override;
@@ -35,7 +37,8 @@ private:
     float rpmToMps(float rpm) const;
     float clampWheelSpeed(float speed_mps) const;
 
-    driver::MotorEncoderDriver& driver_;
+    driver::MotorEncoderDriver& left_driver_;
+    driver::MotorEncoderDriver& right_driver_;
     PIDController left_speed_pid_;
     PIDController right_speed_pid_;
 

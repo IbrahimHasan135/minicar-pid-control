@@ -52,12 +52,13 @@ extern "C" void app_main(void)
 {
     using namespace minicar;
 
-    static driver::MotorEncoderDriver motor_driver;
+    static driver::MotorEncoderDriver left_motor_driver;
+    static driver::MotorEncoderDriver right_motor_driver;
     static driver::IMUDriver imu_driver;
     static driver::ConsoleDriver console_driver;
     static driver::SerialDriver serial_driver;
 
-    static service::MotorControlService motor_service(motor_driver);
+    static service::MotorControlService motor_service(left_motor_driver, right_motor_driver);
     static service::HeadingService heading_service(imu_driver);
     static service::OdometryService odometry_service;
     static service::TelemetryService telemetry_service(console_driver);
