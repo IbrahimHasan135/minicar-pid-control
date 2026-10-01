@@ -3,6 +3,7 @@
 
 #include "application/Mission.hpp"
 #include "config/FreeRTOSConfig.hpp"
+#include "config/MotorHardwareConfig.hpp"
 #include "driver/communication/SerialDriver.hpp"
 #include "driver/imu/IMUDriver.hpp"
 #include "driver/motor/MotorEncoderDriver.hpp"
@@ -52,8 +53,8 @@ extern "C" void app_main(void)
 {
     using namespace minicar;
 
-    static driver::MotorEncoderDriver left_motor_driver;
-    static driver::MotorEncoderDriver right_motor_driver;
+    static driver::MotorEncoderDriver left_motor_driver(config::motor_hardware::LEFT_MOTOR);
+    static driver::MotorEncoderDriver right_motor_driver(config::motor_hardware::RIGHT_MOTOR);
     static driver::IMUDriver imu_driver;
     static driver::ConsoleDriver console_driver;
     static driver::SerialDriver serial_driver;
