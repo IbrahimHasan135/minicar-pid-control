@@ -35,6 +35,26 @@ encoder 3,3 V bila modul mendukungnya, atau gunakan level shifter.
 
 Konfigurasi sementara berada di `main/config/MotorHardwareConfig.hpp`.
 
+### Kabel Dinamo 25GA370
+
+Berdasarkan gambar pinout dinamo:
+
+| Kabel dinamo | Fungsi | Sambungkan ke |
+|---|---|---|
+| White | Quad encoder B signal | GPIO33 melalui level shifter bila sinyal 5 V |
+| Yellow | Quad encoder A signal | GPIO32 melalui level shifter bila sinyal 5 V |
+| Blue | Quad encoder +5V VCC | 5 V encoder supply |
+| Green | Quad encoder Ground | GND bersama ESP32 dan BTS7960 |
+| Red | Motor power terminal (-) | BTS7960 motor output M- / OUT- |
+| Black | Motor power terminal (+) | BTS7960 motor output M+ / OUT+ |
+
+Catatan penting: label gambar menyebut encoder `+5V VCC`, jadi jangan langsung
+memasukkan sinyal A/B 5 V ke GPIO ESP32. Pakai level shifter 5 V ke 3,3 V, atau
+pastikan encoder benar-benar bisa diberi 3,3 V dan output A/B tidak melebihi
+3,3 V sebelum disambungkan langsung.
+
+### Pin BTS7960 dan ESP32
+
 | Sinyal | ESP32 default | Catatan |
 |---|---:|---|
 | BTS7960 GND | GND | Common ground wajib |
@@ -51,6 +71,31 @@ Konfigurasi sementara berada di `main/config/MotorHardwareConfig.hpp`.
 
 `RIGHT_MOTOR` masih memakai `GPIO_NUM_NC`, sehingga service tetap bisa init
 tetapi motor kanan tidak mengeluarkan PWM sampai pin kanannya diisi.
+
+Ringkasnya untuk satu motor kiri:
+
+```text
+Dinamo black (+)  -> BTS7960 M+ / OUT+
+Dinamo red (-)    -> BTS7960 M- / OUT-
+BTS7960 B+ / VM   -> supply motor +12 V
+BTS7960 B- / GND  -> supply motor ground
+BTS7960 GND       -> ESP32 GND
+
+Dinamo blue       -> encoder +5 V
+Dinamo green      -> GND bersama
+Dinamo yellow A   -> level shifter -> ESP32 GPIO32
+Dinamo white B    -> level shifter -> ESP32 GPIO33
+
+ESP32 GPIO25      -> BTS7960 RPWM
+ESP32 GPIO26      -> BTS7960 LPWM
+ESP32 GPIO27      -> BTS7960 R_EN
+ESP32 GPIO14      -> BTS7960 L_EN
+```
+
+Jika fase `left_forward_low` membuat motor berputar mundur, jangan langsung
+ubah logic. Ubah `invert_motor` menjadi `true` atau tukar terminal motor M+/M-.
+Jika arah motor sudah benar tetapi ticks encoder negatif saat maju, ubah
+`invert_encoder` menjadi `true`.
 
 ## Cara Kerja Program
 
