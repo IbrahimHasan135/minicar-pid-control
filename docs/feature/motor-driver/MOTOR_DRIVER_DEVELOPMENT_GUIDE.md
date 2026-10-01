@@ -36,6 +36,7 @@ MotionLoopTask (setiap 10 ms)
         -> MotorEncoderDriver.getLeft/RightTicks()
         -> MotorEncoderDriver.getLeft/RightRPM()
     -> MotorControlService.setVelocityTargets(left_mps, right_mps)
+       atau MotorControlService.setRpmTargets(left_rpm, right_rpm)
     -> PID kiri dan kanan menghasilkan output -1.0 sampai +1.0
     -> MotorControlService.applyControl(dt_s)
         -> MotorEncoderDriver.setLeft/RightOutput(output)
@@ -44,6 +45,8 @@ MotionLoopTask (setiap 10 ms)
 
 `MotorEncoderDriver` hanya mengurus hardware. Jangan menaruh PID, command
 MOVE/TURN, queue, odometry, atau keputusan gerak selesai di dalam driver.
+Driver boleh menghitung feedback dekat-hardware seperti ticks dan RPM dari
+encoder, tetapi target speed dan PID tetap berada di service.
 
 ## 3. Kondisi Implementasi Saat Ini
 
@@ -117,7 +120,7 @@ Urutan yang disarankan:
 Jika salah satu tahap gagal, panggil safe stop dan kembalikan error ESP-IDF.
 Jangan mengembalikan `ESP_OK` untuk hardware yang hanya terinisialisasi sebagian.
 
-### `setLeftOutput(float)` dan `setRightOutput(float)`
+### `setOutput(float)`
 
 Kontrak output dari service adalah normalized command:
 
@@ -139,6 +142,12 @@ Implementasi driver harus:
 Saat berganti arah, gunakan urutan aman: duty nol terlebih dahulu, ubah pin
 arah, kemudian terapkan duty baru. Dead-time tambahan hanya digunakan bila
 memang diwajibkan datasheet H-bridge; jangan membuat control loop blocking.
+
+Catatan target speed: driver tidak menerima target RPM. Target RPM masuk ke
+`MotorControlService::setRpmTargets(left_rpm, right_rpm)`, lalu service yang
+menjalankan PID dan mengubah hasilnya menjadi output normalized untuk driver.
+Dengan begitu driver tetap bisa dipakai di code lain yang hanya butuh akses
+hardware, sedangkan service menjadi adapter unit dan kontrol.
 
 ### `getLeftTicks()` dan `getRightTicks()`
 

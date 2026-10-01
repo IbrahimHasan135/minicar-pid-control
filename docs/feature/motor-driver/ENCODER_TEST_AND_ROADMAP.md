@@ -100,7 +100,8 @@ Jika arah motor sudah benar tetapi ticks encoder negatif saat maju, ubah
 ## Cara Kerja Program
 
 ```text
-MotorControlService.setVelocityTargets()
+MotorControlService.setRpmTargets()
+    -> service mengubah target RPM ke unit internal speed
     -> PID speed menghasilkan output normalized -1..+1
     -> MotorEncoderDriver.setOutput()
     -> LEDC menggerakkan BTS7960 RPWM/LPWM
@@ -138,20 +139,20 @@ Program `main.c` menjalankan urutan:
 
 | Fase | Durasi | Target | Expected hardware | Expected log approve |
 |---|---:|---:|---|---|
-| safe stop | 2 s | 0 m/s | motor diam | ticks stabil |
-| left_forward_low | 3 s | +0.12 m/s | motor putar maju pelan | left_ticks bertambah |
-| stop | 1.5 s | 0 m/s | motor diam | velocity turun mendekati nol |
-| left_reverse_low | 3 s | -0.12 m/s | motor putar mundur pelan | left_ticks berkurang |
-| stop final | selesai | 0 m/s | motor diam | tidak ada gerak lanjut |
+| safe stop | 2 s | 0 RPM | motor diam | ticks stabil |
+| left_forward_low | 3 s | +30 RPM | motor putar maju pelan | left_ticks bertambah, left_rpm positif |
+| stop | 1.5 s | 0 RPM | motor diam | RPM turun mendekati nol |
+| left_reverse_low | 3 s | -30 RPM | motor putar mundur pelan | left_ticks berkurang, left_rpm negatif |
+| stop final | selesai | 0 RPM | motor diam | tidak ada gerak lanjut |
 
 Contoh pola log yang dicari:
 
 ```text
-PHASE=left_forward_low target_left=0.120 target_right=0.000
-phase=left_forward_low left_ticks=... left_mps=...
+PHASE=left_forward_low target_left_rpm=30.00 target_right_rpm=0.00
+phase=left_forward_low left_ticks=... left_rpm=... left_mps=...
 PHASE=left_forward_low DONE ...
-PHASE=left_reverse_low target_left=-0.120 target_right=0.000
-phase=left_reverse_low left_ticks=... left_mps=...
+PHASE=left_reverse_low target_left_rpm=-30.00 target_right_rpm=0.00
+phase=left_reverse_low left_ticks=... left_rpm=... left_mps=...
 PHASE=left_reverse_low DONE ...
 ```
 
@@ -161,7 +162,7 @@ Approve awal diberikan kalau:
 - fase forward membuat arah fisik maju;
 - fase reverse membuat arah fisik mundur;
 - ticks forward positif dan ticks reverse negatif;
-- velocity kembali mendekati nol saat stop.
+- RPM dan velocity kembali mendekati nol saat stop.
 
 Jika motor forward bergerak ke arah salah, ubah `invert_motor` pada config
 motor atau tukar wiring motor. Jika arah fisik benar tetapi ticks terbalik, ubah
@@ -200,6 +201,7 @@ scope motor/encoder siap direview.
 - [x] Tambahkan config pin BTS7960 per motor.
 - [x] Implementasikan LEDC RPWM/LPWM dan safe stop di driver.
 - [x] Jalankan bench lewat `MotorControlService`, bukan akses driver langsung.
+- [x] Tambahkan target bench berbasis RPM dan log RPM.
 - [ ] Build dengan ESP-IDF 5.4.4.
 - [ ] Validasi motor diam saat boot.
 - [ ] Validasi output positif membuat arah maju.
