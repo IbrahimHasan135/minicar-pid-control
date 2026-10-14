@@ -131,11 +131,17 @@ bukti akurasi belok.
 
 ## Urutan Approval Hardware
 
+Firmware bench default sekarang menjalankan pengujian IMU selama 10 detik dan
+menjaga motor dalam kondisi STOP. `RUN_MOTOR_TEST_AFTER_IMU` bernilai `false`,
+sehingga pengujian motor tidak dimulai otomatis setelah chassis diputar manual.
+
 1. Flash dengan motor power dilepas dan pastikan log menampilkan
    `GY-511/LSM303 ready`.
-2. Putar chassis manual ke kanan dan kiri; pastikan tanda `yaw_dps` sesuai.
+2. Saat log menunjukkan `PHASE=imu_read_test`, putar chassis perlahan ke kanan
+   lalu kiri; pastikan tanda `yaw_dps` sesuai.
 3. Pastikan `heading_deg` kembali mendekati nilai awal setelah rotasi kembali.
-4. Angkat seluruh roda, sambungkan motor power, lalu validasi maju/mundur.
+4. Setelah IMU lulus, ubah `RUN_MOTOR_TEST_AFTER_IMU` menjadi `true`, angkat
+   seluruh roda, sambungkan motor power, lalu validasi maju/mundur.
 5. Konfigurasikan BTS7960 serta encoder kanan; warning `GPIO_NUM_NC` harus hilang.
 6. Uji pivot kanan: roda kiri maju dan roda kanan mundur.
 7. Uji pivot kiri: roda kiri mundur dan roda kanan maju.

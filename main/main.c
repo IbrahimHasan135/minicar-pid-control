@@ -15,6 +15,41 @@ constexpr const char* TAG = "MotorDriverTest";
 constexpr TickType_t CONTROL_PERIOD = pdMS_TO_TICKS(50);
 constexpr float CONTROL_DT_S = 0.05f;
 constexpr float LOW_TEST_SPEED_RPM = 30.0f;
+constexpr int IMU_TEST_DURATION_MS = 10000;
+constexpr bool RUN_MOTOR_TEST_AFTER_IMU = false;
+
+void runImuReadTest(
+    minicar::service::MotorControlService& motor_service,
+    minicar::service::HeadingService& heading_service)
+{
+    ESP_LOGI(TAG, "PHASE=imu_read_test duration_ms=%d motor=STOP", IMU_TEST_DURATION_MS);
+    ESP_LOGI(TAG, "Putar chassis perlahan ke kanan lalu kiri; amati tanda heading_deg dan yaw_dps");
+
+    motor_service.stopMotor();
+    heading_service.resetHeadingReference();
+
+    const int steps = IMU_TEST_DURATION_MS / static_cast<int>(CONTROL_DT_S * 1000.0f);
+    for (int i = 0; i < steps; ++i) {
+        heading_service.updateHeading(CONTROL_DT_S);
+
+        if ((i % 5) == 0) {
+            ESP_LOGI(
+                TAG,
+                "phase=imu_read_test heading_deg=%.2f yaw_dps=%.2f motor=STOP",
+                static_cast<double>(heading_service.getHeadingDeg()),
+                static_cast<double>(heading_service.getYawRateDps()));
+        }
+
+        vTaskDelay(CONTROL_PERIOD);
+    }
+
+    motor_service.stopMotor();
+    ESP_LOGI(
+        TAG,
+        "PHASE=imu_read_test DONE heading_deg=%.2f yaw_dps=%.2f motor=STOP",
+        static_cast<double>(heading_service.getHeadingDeg()),
+        static_cast<double>(heading_service.getYawRateDps()));
+}
 
 void runPhase(
     minicar::service::MotorControlService& motor_service,
@@ -104,6 +139,15 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "Boot safe stop 2s: motor harus diam");
     motor_service.stopMotor();
     vTaskDelay(pdMS_TO_TICKS(2000));
+
+    runImuReadTest(motor_service, heading_service);
+    if (!RUN_MOTOR_TEST_AFTER_IMU) {
+        ESP_LOGI(TAG, "IMU-only test complete. Motor test disabled by RUN_MOTOR_TEST_AFTER_IMU=false");
+        motor_service.stopMotor();
+        return;
+    }
+
+    heading_service.resetHeadingReference();
 
     runPhase(motor_service, heading_service, "left_forward_low", LOW_TEST_SPEED_RPM, 0.0f, 3000);
     vTaskDelay(pdMS_TO_TICKS(1500));
