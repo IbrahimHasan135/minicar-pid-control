@@ -36,6 +36,14 @@ esp_err_t MotorEncoderDriver::init()
         return ESP_OK;
     }
 
+    if (hasEncoder() &&
+        (!std::isfinite(config_.encoder_counts_per_output_rev) ||
+         config_.encoder_counts_per_output_rev <= 0.0f)) {
+        ESP_LOGE(TAG, "encoder counts per output revolution must be positive");
+        stop();
+        return ESP_ERR_INVALID_ARG;
+    }
+
     esp_err_t result = initPwm();
     if (result != ESP_OK) {
         stop();
@@ -65,15 +73,18 @@ esp_err_t MotorEncoderDriver::init()
 
 void MotorEncoderDriver::setOutput(float output)
 {
-    if (!std::isfinite(output)) {
+    if (!initialized_ || !std::isfinite(output)) {
         stop();
         return;
     }
 
-    output_ = std::clamp(output, -1.0f, 1.0f);
-    if (writePwm(output_) != ESP_OK) {
+    const float clamped_output = std::clamp(output, -1.0f, 1.0f);
+    if (writePwm(clamped_output) != ESP_OK) {
         stop();
+        return;
     }
+
+    output_ = clamped_output;
 }
 
 int32_t MotorEncoderDriver::getTicks() const
@@ -97,7 +108,7 @@ float MotorEncoderDriver::getRPM() const
     const int32_t delta_ticks = ticks - last_rpm_ticks_;
     const float elapsed_s = static_cast<float>(elapsed_us) / 1000000.0f;
     rpm_ = (static_cast<float>(delta_ticks) * 60.0f) /
-           (config::motor_hardware::ENCODER_COUNTS_PER_OUTPUT_REV * elapsed_s);
+           (config_.encoder_counts_per_output_rev * elapsed_s);
     last_rpm_ticks_ = ticks;
     last_rpm_time_us_ = now_us;
     return rpm_;
@@ -280,13 +291,26 @@ esp_err_t MotorEncoderDriver::writePwm(float output)
     const float signed_output = config_.invert_motor ? -output : output;
     const float magnitude = std::fabs(std::clamp(signed_output, -1.0f, 1.0f));
     const uint32_t duty = static_cast<uint32_t>(magnitude * static_cast<float>(PWM_MAX_DUTY));
-    const uint32_t forward_duty = signed_output > 0.0f ? duty : 0U;
-    const uint32_t reverse_duty = signed_output < 0.0f ? duty : 0U;
 
-    ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, forward_duty), TAG, "set RPWM duty failed");
-    ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
-    ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, reverse_duty), TAG, "set LPWM duty failed");
-    ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
+    // Matikan sisi berlawanan lebih dulu. Urutan ini mencegah RPWM dan LPWM
+    // aktif bersamaan sesaat ketika arah motor berubah.
+    if (signed_output > 0.0f) {
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, 0U), TAG, "clear LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, duty), TAG, "set RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
+    } else if (signed_output < 0.0f) {
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, 0U), TAG, "clear RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, duty), TAG, "set LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
+    } else {
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, 0U), TAG, "clear RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, 0U), TAG, "clear LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
+    }
+
     return ESP_OK;
 }
 

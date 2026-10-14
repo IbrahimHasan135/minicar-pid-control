@@ -25,8 +25,9 @@ Application -> Logic/Task -> Service -> Driver -> Hardware
 | `main/CMakeLists.txt` | Daftar source dan komponen ESP-IDF | Perlu diperbarui bila driver membutuhkan komponen baru |
 | `docs/` | Arsitektur dan aturan project | Baca sebelum mengubah boundary layer |
 
-Catatan: `main/main.c` tidak tercantum di `main/CMakeLists.txt`, sehingga entry
-point aktif adalah `main/app_main.cpp`.
+Catatan: branch `feat/motor-driver` saat ini sengaja membangun `main/main.c`
+sebagai C++ untuk firmware bench test motor. `main/app_main.cpp` tetap menjadi
+entry point produk dan tidak ikut build selama tahap validasi hardware ini.
 
 ## 2. Alur Motor yang Sudah Ada
 
@@ -57,17 +58,23 @@ main/driver/motor/MotorEncoderDriver.hpp
 main/driver/motor/MotorEncoderDriver.cpp
 ```
 
-Semua API sudah dibuat, tetapi hardware masih berupa skeleton:
+Driver BTS7960 dan encoder sudah memiliki implementasi hardware:
 
-- `init()` selalu mengembalikan `ESP_ERR_NOT_SUPPORTED`;
-- output hanya disimpan ke variable, belum menjadi sinyal GPIO/PWM;
-- ticks dan RPM selalu nol;
-- `stop()` belum menghentikan hardware;
-- akibatnya `MotorControlService::isInitialized()` selalu `false` dan
-  `MotionLoopTask` masuk fail-safe `ERROR`.
+- LEDC 20 kHz mengendalikan `RPWM` dan `LPWM`;
+- `R_EN` dan `L_EN` diaktifkan saat inisialisasi;
+- perubahan arah mematikan kanal lawan sebelum menyalakan kanal tujuan;
+- PCNT membaca quadrature encoder A/B;
+- ticks bersifat kumulatif dan RPM dihitung dari delta ticks terhadap waktu;
+- nilai counts per output revolution disimpan per konfigurasi motor;
+- output non-finite, pemanggilan sebelum init, dan kegagalan PWM berakhir pada
+  safe stop.
 
-Artinya prioritas pertama bukan tuning PID. Prioritas pertama adalah membuat
-init, open-loop motor, dan pembacaan encoder benar serta aman.
+Firmware bench saat ini mengaktifkan motor kiri saja. Konfigurasi motor kanan
+masih `GPIO_NUM_NC`, sehingga warning bahwa PWM/encoder kanan dilewati adalah
+normal sampai hardware kedua benar-benar dipasang.
+
+Tahap berikutnya adalah validasi hardware dan kalibrasi, bukan menambah PID ke
+driver. Nilai PID sekarang masih nilai awal dan belum dibuktikan pada kendaraan.
 
 ## 4. Data Hardware yang Harus Diisi Sebelum Coding
 
