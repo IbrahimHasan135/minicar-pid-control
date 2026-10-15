@@ -47,22 +47,23 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
     false,
 };
 
-// Right motor belum difokuskan pada bench awal. Isi pin ini saat BTS7960 kanan
-// dan encoder kanan sudah benar-benar dipasang.
+// BTS7960 dan encoder roda kanan. Motor kanan dipasang mirror terhadap kiri,
+// sehingga arah motor dan encoder dibalik agar command positif tetap berarti
+// kendaraan bergerak maju dan feedback RPM tetap positif.
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
     MotorPins{
-        GPIO_NUM_NC,
-        GPIO_NUM_NC,
-        GPIO_NUM_NC,
-        GPIO_NUM_NC,
-        GPIO_NUM_NC,
-        GPIO_NUM_NC,
+        GPIO_NUM_18,  // RPWM
+        GPIO_NUM_19,  // LPWM
+        GPIO_NUM_23,  // R_EN
+        GPIO_NUM_13,  // L_EN
+        GPIO_NUM_16,  // Encoder A
+        GPIO_NUM_17,  // Encoder B
     },
     LEDC_CHANNEL_2,
     LEDC_CHANNEL_3,
     ENCODER_COUNTS_PER_OUTPUT_REV_ESTIMATE,
-    false,
-    false,
+    true,
+    true,
 };
 
 constexpr ledc_mode_t PWM_SPEED_MODE = LEDC_LOW_SPEED_MODE;

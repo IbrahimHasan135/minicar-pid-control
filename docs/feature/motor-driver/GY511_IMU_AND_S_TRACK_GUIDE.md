@@ -142,15 +142,17 @@ sehingga pengujian motor tidak dimulai otomatis setelah chassis diputar manual.
 3. Pastikan `heading_deg` kembali mendekati nilai awal setelah rotasi kembali.
 4. Setelah IMU lulus, ubah `RUN_MOTOR_TEST_AFTER_IMU` menjadi `true`, angkat
    seluruh roda, sambungkan motor power, lalu validasi maju/mundur.
-5. Konfigurasikan BTS7960 serta encoder kanan; warning `GPIO_NUM_NC` harus hilang.
+5. Pastikan BTS7960 dan encoder kanan mengikuti pin di
+   `DUAL_BTS7960_WIRING_AND_TEST.md`; tidak boleh ada warning pin yang dilewati.
 6. Uji pivot kanan: roda kiri maju dan roda kanan mundur.
 7. Uji pivot kiri: roda kiri mundur dan roda kanan maju.
 8. Uji heading hold pada kecepatan rendah di lintasan lurus.
 9. Kalibrasikan PID heading dan speed PID berdasarkan log nyata.
 10. Baru jalankan track S, mulai dari profil yang aman dan satu lintasan sekali.
 
-Approval belok belum dapat diberikan selama motor kanan masih
-`GPIO_NUM_NC`. Jangan menghubungkan hardware kanan ke pin tebakan.
+Konfigurasi motor kanan sekarang sudah tersedia. Approval belok tetap hanya
+diberikan setelah arah roda, tanda RPM, safe stop, dan fase pivot lulus pada
+pengujian roda terangkat.
 
 ## Referensi Sensor
 

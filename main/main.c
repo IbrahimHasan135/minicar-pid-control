@@ -15,6 +15,7 @@ constexpr const char* TAG = "MotorDriverTest";
 constexpr TickType_t CONTROL_PERIOD = pdMS_TO_TICKS(50);
 constexpr float CONTROL_DT_S = 0.05f;
 constexpr float LOW_TEST_SPEED_RPM = 30.0f;
+constexpr float TURN_TEST_SPEED_RPM = 20.0f;
 constexpr int IMU_TEST_DURATION_MS = 10000;
 constexpr bool RUN_MOTOR_TEST_AFTER_IMU = false;
 
@@ -114,7 +115,7 @@ extern "C" void app_main(void)
     using namespace minicar;
 
     ESP_LOGI(TAG, "SERVICE MOTOR BENCH TEST: roda wajib terangkat dan emergency power-off siap");
-    ESP_LOGI(TAG, "Default aktif hanya LEFT_MOTOR. Cek pin di MotorHardwareConfig.hpp sebelum flash");
+    ESP_LOGI(TAG, "LEFT_MOTOR dan RIGHT_MOTOR aktif. Cek semua pin di MotorHardwareConfig.hpp sebelum flash");
 
     static driver::MotorEncoderDriver left_motor(config::motor_hardware::LEFT_MOTOR);
     static driver::MotorEncoderDriver right_motor(config::motor_hardware::RIGHT_MOTOR);
@@ -149,9 +150,13 @@ extern "C" void app_main(void)
 
     heading_service.resetHeadingReference();
 
-    runPhase(motor_service, heading_service, "left_forward_low", LOW_TEST_SPEED_RPM, 0.0f, 3000);
+    runPhase(motor_service, heading_service, "both_forward_low", LOW_TEST_SPEED_RPM, LOW_TEST_SPEED_RPM, 3000);
     vTaskDelay(pdMS_TO_TICKS(1500));
-    runPhase(motor_service, heading_service, "left_reverse_low", -LOW_TEST_SPEED_RPM, 0.0f, 3000);
+    runPhase(motor_service, heading_service, "both_reverse_low", -LOW_TEST_SPEED_RPM, -LOW_TEST_SPEED_RPM, 3000);
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    runPhase(motor_service, heading_service, "pivot_right_low", TURN_TEST_SPEED_RPM, -TURN_TEST_SPEED_RPM, 2000);
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    runPhase(motor_service, heading_service, "pivot_left_low", -TURN_TEST_SPEED_RPM, TURN_TEST_SPEED_RPM, 2000);
     vTaskDelay(pdMS_TO_TICKS(1500));
 
     ESP_LOGI(TAG, "Bench sequence complete. Motor stopped; logs above menjadi bukti arah, ticks, dan feedback");
