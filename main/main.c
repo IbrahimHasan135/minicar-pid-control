@@ -11,11 +11,11 @@ namespace {
 
 constexpr const char* TAG = "MotorDriverTest";
 constexpr TickType_t CONTROL_PERIOD = pdMS_TO_TICKS(50);
-constexpr float CONTROL_DT_S = 0.05f;
-constexpr float LOW_TEST_SPEED_RPM = 30.0f;
-constexpr float TURN_TEST_SPEED_RPM = 20.0f;
 constexpr int SAFE_START_DELAY_MS = 5000;
 constexpr int STOP_BETWEEN_PHASES_MS = 1500;
+constexpr float OUTPUT_LOW = 0.20f;
+constexpr float OUTPUT_MEDIUM = 0.35f;
+constexpr float OUTPUT_HIGH = 0.50f;
 
 void waitWithMotorStopped(minicar::service::MotorControlService& motor_service)
 {
@@ -23,39 +23,36 @@ void waitWithMotorStopped(minicar::service::MotorControlService& motor_service)
     vTaskDelay(pdMS_TO_TICKS(STOP_BETWEEN_PHASES_MS));
 }
 
-void runPhase(
+void runOpenLoopPhase(
     minicar::service::MotorControlService& motor_service,
     const char* phase,
-    float left_target_rpm,
-    float right_target_rpm,
+    float left_output,
+    float right_output,
     int duration_ms)
 {
-    ESP_LOGI(TAG, "PHASE=%s target_left_rpm=%.2f target_right_rpm=%.2f",
+    ESP_LOGI(TAG, "PHASE=%s left_output=%.2f right_output=%.2f duration_ms=%d",
         phase,
-        static_cast<double>(left_target_rpm),
-        static_cast<double>(right_target_rpm));
+        static_cast<double>(left_output),
+        static_cast<double>(right_output),
+        duration_ms);
 
-    motor_service.resetControllers();
-    motor_service.setRpmTargets(left_target_rpm, right_target_rpm);
+    motor_service.setOpenLoopOutputs(left_output, right_output);
 
-    const int steps = duration_ms / static_cast<int>(CONTROL_DT_S * 1000.0f);
+    const int steps = duration_ms / static_cast<int>(CONTROL_PERIOD * portTICK_PERIOD_MS);
     for (int i = 0; i < steps; ++i) {
         motor_service.refreshFeedback();
-        motor_service.applyControl(CONTROL_DT_S);
 
         if ((i % 5) == 0) {
             ESP_LOGI(
                 TAG,
-                "phase=%s target_left_rpm=%.2f target_right_rpm=%.2f left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f left_mps=%.3f right_mps=%.3f",
+                "phase=%s left_output=%.2f right_output=%.2f left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f",
                 phase,
-                static_cast<double>(left_target_rpm),
-                static_cast<double>(right_target_rpm),
+                static_cast<double>(left_output),
+                static_cast<double>(right_output),
                 static_cast<long>(motor_service.getLeftTicks()),
                 static_cast<long>(motor_service.getRightTicks()),
                 static_cast<double>(motor_service.getLeftRPM()),
-                static_cast<double>(motor_service.getRightRPM()),
-                static_cast<double>(motor_service.getLeftVelocityMps()),
-                static_cast<double>(motor_service.getRightVelocityMps()));
+                static_cast<double>(motor_service.getRightRPM()));
         }
 
         vTaskDelay(CONTROL_PERIOD);
@@ -65,14 +62,12 @@ void runPhase(
     motor_service.refreshFeedback();
     ESP_LOGI(
         TAG,
-        "PHASE=%s DONE left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f left_mps=%.3f right_mps=%.3f",
+        "PHASE=%s DONE motor=STOP left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f",
         phase,
         static_cast<long>(motor_service.getLeftTicks()),
         static_cast<long>(motor_service.getRightTicks()),
         static_cast<double>(motor_service.getLeftRPM()),
-        static_cast<double>(motor_service.getRightRPM()),
-        static_cast<double>(motor_service.getLeftVelocityMps()),
-        static_cast<double>(motor_service.getRightVelocityMps()));
+        static_cast<double>(motor_service.getRightRPM()));
 }
 
 }  // namespace
@@ -81,8 +76,9 @@ extern "C" void app_main(void)
 {
     using namespace minicar;
 
-    ESP_LOGI(TAG, "SERVICE MOTOR BENCH TEST: roda wajib terangkat dan emergency power-off siap");
-    ESP_LOGI(TAG, "LEFT_MOTOR dan RIGHT_MOTOR aktif. Cek semua pin di MotorHardwareConfig.hpp sebelum flash");
+    ESP_LOGI(TAG, "OPEN-LOOP MOTOR BENCH TEST: roda wajib terangkat dan emergency power-off siap");
+    ESP_LOGI(TAG, "PID TIDAK DIGUNAKAN. R_EN/L_EN kedua BTS harus terhubung langsung ke regulated 5 V");
+    ESP_LOGI(TAG, "PWM kiri RPWM/LPWM=25/26; PWM kanan RPWM/LPWM=18/19; PWM=1 kHz 8-bit");
 
     static driver::MotorEncoderDriver left_motor(config::motor_hardware::LEFT_MOTOR);
     static driver::MotorEncoderDriver right_motor(config::motor_hardware::RIGHT_MOTOR);
@@ -99,19 +95,27 @@ extern "C" void app_main(void)
     motor_service.stopMotor();
     vTaskDelay(pdMS_TO_TICKS(SAFE_START_DELAY_MS));
 
-    runPhase(motor_service, "left_forward_low", LOW_TEST_SPEED_RPM, 0.0f, 2000);
+    runOpenLoopPhase(motor_service, "left_forward_20pct", OUTPUT_LOW, 0.0f, 1500);
     waitWithMotorStopped(motor_service);
-    runPhase(motor_service, "right_forward_low", 0.0f, LOW_TEST_SPEED_RPM, 2000);
+    runOpenLoopPhase(motor_service, "left_forward_35pct", OUTPUT_MEDIUM, 0.0f, 1500);
     waitWithMotorStopped(motor_service);
-    runPhase(motor_service, "both_forward_low", LOW_TEST_SPEED_RPM, LOW_TEST_SPEED_RPM, 3000);
+    runOpenLoopPhase(motor_service, "left_forward_50pct", OUTPUT_HIGH, 0.0f, 1500);
     waitWithMotorStopped(motor_service);
-    runPhase(motor_service, "both_reverse_low", -LOW_TEST_SPEED_RPM, -LOW_TEST_SPEED_RPM, 3000);
+    runOpenLoopPhase(motor_service, "left_reverse_35pct", -OUTPUT_MEDIUM, 0.0f, 1500);
     waitWithMotorStopped(motor_service);
-    runPhase(motor_service, "pivot_right_low", TURN_TEST_SPEED_RPM, -TURN_TEST_SPEED_RPM, 2000);
+    runOpenLoopPhase(motor_service, "right_forward_20pct", 0.0f, OUTPUT_LOW, 1500);
     waitWithMotorStopped(motor_service);
-    runPhase(motor_service, "pivot_left_low", -TURN_TEST_SPEED_RPM, TURN_TEST_SPEED_RPM, 2000);
+    runOpenLoopPhase(motor_service, "right_forward_35pct", 0.0f, OUTPUT_MEDIUM, 1500);
+    waitWithMotorStopped(motor_service);
+    runOpenLoopPhase(motor_service, "right_forward_50pct", 0.0f, OUTPUT_HIGH, 1500);
+    waitWithMotorStopped(motor_service);
+    runOpenLoopPhase(motor_service, "right_reverse_35pct", 0.0f, -OUTPUT_MEDIUM, 1500);
+    waitWithMotorStopped(motor_service);
+    runOpenLoopPhase(motor_service, "both_forward_35pct", OUTPUT_MEDIUM, OUTPUT_MEDIUM, 2000);
+    waitWithMotorStopped(motor_service);
+    runOpenLoopPhase(motor_service, "both_reverse_35pct", -OUTPUT_MEDIUM, -OUTPUT_MEDIUM, 2000);
 
-    ESP_LOGI(TAG, "Bench sequence complete. Motor stopped; logs above menjadi bukti arah, ticks, dan feedback");
+    ESP_LOGI(TAG, "Open-loop bench sequence complete. Motor stopped; PID tidak digunakan");
     motor_service.stopMotor();
 
     while (true) {

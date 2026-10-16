@@ -29,14 +29,15 @@ struct MotorPeripheralConfig {
 // perubahan ticks aktual.
 constexpr float ENCODER_COUNTS_PER_OUTPUT_REV_ESTIMATE = 1496.0f;
 
-// BTS7960 bench pinout. WAJIB cocokkan dengan wiring fisik sebelum flash.
-// Gunakan GPIO_NUM_NC untuk pin yang belum dipasang.
+// BTS7960 open-loop bench pinout. R_EN dan L_EN diikat langsung ke regulated
+// 5 V selama bring-up, sehingga firmware tidak mengendalikan pin enable.
+// WAJIB cocokkan wiring fisik sebelum flash.
 constexpr MotorPeripheralConfig LEFT_MOTOR{
     MotorPins{
         GPIO_NUM_25,  // RPWM
         GPIO_NUM_26,  // LPWM
-        GPIO_NUM_27,  // R_EN
-        GPIO_NUM_14,  // L_EN
+        GPIO_NUM_NC,  // R_EN -> regulated 5 V untuk bench
+        GPIO_NUM_NC,  // L_EN -> regulated 5 V untuk bench
         GPIO_NUM_32,  // Encoder A
         GPIO_NUM_33,  // Encoder B
     },
@@ -54,8 +55,8 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
     MotorPins{
         GPIO_NUM_18,  // RPWM
         GPIO_NUM_19,  // LPWM
-        GPIO_NUM_23,  // R_EN
-        GPIO_NUM_13,  // L_EN
+        GPIO_NUM_NC,  // R_EN -> regulated 5 V untuk bench
+        GPIO_NUM_NC,  // L_EN -> regulated 5 V untuk bench
         GPIO_NUM_16,  // Encoder A
         GPIO_NUM_17,  // Encoder B
     },
@@ -68,8 +69,10 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
 
 constexpr ledc_mode_t PWM_SPEED_MODE = LEDC_LOW_SPEED_MODE;
 constexpr ledc_timer_t PWM_TIMER = LEDC_TIMER_0;
-constexpr ledc_timer_bit_t PWM_DUTY_RESOLUTION = LEDC_TIMER_10_BIT;
-constexpr unsigned int PWM_FREQUENCY_HZ = 20000;
+// Samakan dahulu dengan sketch Arduino yang sudah terbukti menggerakkan motor.
+// Frekuensi/resolusi dapat dinaikkan lagi setelah power stage lulus bench test.
+constexpr ledc_timer_bit_t PWM_DUTY_RESOLUTION = LEDC_TIMER_8_BIT;
+constexpr unsigned int PWM_FREQUENCY_HZ = 1000;
 constexpr unsigned int PWM_MAX_DUTY = (1U << PWM_DUTY_RESOLUTION) - 1U;
 
 // Abaikan pulsa yang lebih pendek dari nilai ini. Naikkan hanya jika ada noise.

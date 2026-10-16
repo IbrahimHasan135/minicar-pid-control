@@ -48,18 +48,18 @@ secara independen ketika kendaraan berbelok.
 
 ## 2. Ringkasan Semua Pin ESP32
 
-| Perangkat | Sinyal | GPIO ESP32 |
+| Perangkat | Sinyal | Sambungan |
 |---|---|---:|
 | BTS7960 kiri | RPWM | 25 |
 | BTS7960 kiri | LPWM | 26 |
-| BTS7960 kiri | R_EN | 27 |
-| BTS7960 kiri | L_EN | 14 |
+| BTS7960 kiri | R_EN | 5 V langsung, bukan GPIO |
+| BTS7960 kiri | L_EN | 5 V langsung, bukan GPIO |
 | Encoder kiri | Phase A | 32 |
 | Encoder kiri | Phase B | 33 |
 | BTS7960 kanan | RPWM | 18 |
 | BTS7960 kanan | LPWM | 19 |
-| BTS7960 kanan | R_EN | 23 |
-| BTS7960 kanan | L_EN | 13 |
+| BTS7960 kanan | R_EN | 5 V langsung, bukan GPIO |
+| BTS7960 kanan | L_EN | 5 V langsung, bukan GPIO |
 | Encoder kanan | Phase A | 16 |
 | Encoder kanan | Phase B | 17 |
 | GY-511 | SDA | 21 |
@@ -107,8 +107,8 @@ terhadap GND sebelum memasangnya ke GPIO jika spesifikasi encoder tidak jelas.
 |---|---|---|
 | RPWM | ESP32 GPIO25 | PWM arah pertama |
 | LPWM | ESP32 GPIO26 | PWM arah sebaliknya |
-| R_EN | ESP32 GPIO27 | Enable, dibuat HIGH oleh driver |
-| L_EN | ESP32 GPIO14 | Enable, dibuat HIGH oleh driver |
+| R_EN | Regulated 5 V logic | Selalu enabled selama bench test |
+| L_EN | Regulated 5 V logic | Selalu enabled selama bench test |
 | VCC | Regulated 5 V logic | Bukan 12 V |
 | GND | Common GND | Wajib tersambung dengan ESP32 |
 | R_IS | Tidak dipasang | Current sense belum digunakan |
@@ -137,8 +137,8 @@ Ringkasan:
 ```text
 ESP32 25 -> RPWM BTS kiri
 ESP32 26 -> LPWM BTS kiri
-ESP32 27 -> R_EN BTS kiri
-ESP32 14 -> L_EN BTS kiri
+Regulated 5 V -> R_EN BTS kiri
+Regulated 5 V -> L_EN BTS kiri
 
 Baterai +12 V -> fuse/switch -> B+ BTS kiri
 Baterai negatif -------------> B- BTS kiri
@@ -157,8 +157,8 @@ Motor kiri B -> level aman 3,3 V -> ESP32 GPIO33
 |---|---|---|
 | RPWM | ESP32 GPIO18 | PWM arah pertama |
 | LPWM | ESP32 GPIO19 | PWM arah sebaliknya |
-| R_EN | ESP32 GPIO23 | Enable, dibuat HIGH oleh driver |
-| L_EN | ESP32 GPIO13 | Enable, dibuat HIGH oleh driver |
+| R_EN | Regulated 5 V logic | Selalu enabled selama bench test |
+| L_EN | Regulated 5 V logic | Selalu enabled selama bench test |
 | VCC | Regulated 5 V logic | Bukan 12 V |
 | GND | Common GND | Wajib tersambung dengan ESP32 |
 | R_IS | Tidak dipasang | Current sense belum digunakan |
@@ -187,8 +187,8 @@ Ringkasan:
 ```text
 ESP32 18 -> RPWM BTS kanan
 ESP32 19 -> LPWM BTS kanan
-ESP32 23 -> R_EN BTS kanan
-ESP32 13 -> L_EN BTS kanan
+Regulated 5 V -> R_EN BTS kanan
+Regulated 5 V -> L_EN BTS kanan
 
 Baterai +12 V -> fuse/switch -> B+ BTS kanan
 Baterai negatif -------------> B- BTS kanan
@@ -300,6 +300,7 @@ atau regulator expansion rusak.
 - [ ] Common ground dipasang.
 - [ ] GY-511 diuji sendiri pada 3V3.
 - [ ] Tegangan HIGH encoder dipastikan tidak melebihi 3,3 V pada GPIO.
+- [ ] R_EN dan L_EN kedua BTS terhubung ke regulated 5 V, bukan GPIO ESP32.
 - [ ] Logic BTS diuji tanpa baterai 12 V.
 - [ ] Polaritas B+ dan B- diperiksa ulang.
 - [ ] Fuse dan emergency switch terpasang.
@@ -315,22 +316,24 @@ idf.py build
 idf.py -p COM3 flash monitor
 ```
 
-Firmware menahan motor dalam keadaan STOP selama 5 detik setelah boot, lalu
-menjalankan urutan:
+Firmware open-loop tidak memanggil PID. Motor ditahan STOP selama 5 detik
+setelah boot, lalu output normalized diteruskan dari main ke service dan driver:
 
-| Fase | Target kiri | Target kanan | Durasi |
+| Fase | Output kiri | Output kanan | Durasi |
 |---|---:|---:|---:|
-| `left_forward_low` | +30 RPM | 0 RPM | 2 s |
-| stop | 0 RPM | 0 RPM | 1,5 s |
-| `right_forward_low` | 0 RPM | +30 RPM | 2 s |
-| stop | 0 RPM | 0 RPM | 1,5 s |
-| `both_forward_low` | +30 RPM | +30 RPM | 3 s |
-| stop | 0 RPM | 0 RPM | 1,5 s |
-| `both_reverse_low` | -30 RPM | -30 RPM | 3 s |
-| stop | 0 RPM | 0 RPM | 1,5 s |
-| `pivot_right_low` | +20 RPM | -20 RPM | 2 s |
-| stop | 0 RPM | 0 RPM | 1,5 s |
-| `pivot_left_low` | -20 RPM | +20 RPM | 2 s |
+| `left_forward_20pct` | +20% | 0% | 1,5 s |
+| `left_forward_35pct` | +35% | 0% | 1,5 s |
+| `left_forward_50pct` | +50% | 0% | 1,5 s |
+| `left_reverse_35pct` | -35% | 0% | 1,5 s |
+| `right_forward_20pct` | 0% | +20% | 1,5 s |
+| `right_forward_35pct` | 0% | +35% | 1,5 s |
+| `right_forward_50pct` | 0% | +50% | 1,5 s |
+| `right_reverse_35pct` | 0% | -35% | 1,5 s |
+| `both_forward_35pct` | +35% | +35% | 2 s |
+| `both_reverse_35pct` | -35% | -35% | 2 s |
+
+Setiap fase dipisahkan STOP selama 1,5 detik. PWM bench menggunakan 1 kHz,
+8-bit agar sama dengan setup Arduino yang sudah terbukti.
 
 Setelah seluruh fase selesai, firmware menjaga motor STOP. Tekan `EN/RESET`
 untuk mengulang.
@@ -349,8 +352,8 @@ untuk mengulang.
 Contoh log:
 
 ```text
-PHASE=both_forward_low target_left_rpm=30.00 target_right_rpm=30.00
-phase=both_forward_low left_ticks=... right_ticks=... left_rpm=... right_rpm=...
+PHASE=both_forward_35pct left_output=0.35 right_output=0.35 duration_ms=2000
+phase=both_forward_35pct left_ticks=... right_ticks=... left_rpm=... right_rpm=...
 TEST COMPLETE: motor tetap STOP. Tekan EN/RESET untuk mengulang
 ```
 
@@ -388,12 +391,14 @@ Tegangan HIGH encoder A/B:
 Ticks satu putaran roda kiri:
 Ticks satu putaran roda kanan:
 RPM no-load kiri/kanan:
-Arah left_forward_low:
-Arah right_forward_low:
-Arah both_forward_low:
-Arah both_reverse_low:
-Arah pivot_right_low:
-Arah pivot_left_low:
+Duty minimum motor kiri mulai bergerak:
+Duty minimum motor kanan mulai bergerak:
+Arah left_forward_35pct:
+Arah left_reverse_35pct:
+Arah right_forward_35pct:
+Arah right_reverse_35pct:
+Arah both_forward_35pct:
+Arah both_reverse_35pct:
 Ada/tidak brownout:
 Temperatur motor/BTS setelah test:
 Keputusan invert_motor kiri/kanan:

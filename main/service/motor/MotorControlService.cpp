@@ -71,6 +71,23 @@ void MotorControlService::refreshFeedback()
     right_velocity_mps_ = rpmToMps(right_rpm_);
 }
 
+void MotorControlService::setOpenLoopOutputs(float left_output, float right_output)
+{
+    if (!initialized_) {
+        left_driver_.stop();
+        right_driver_.stop();
+        return;
+    }
+
+    // Open-loop hanya untuk hardware bring-up. Pastikan state closed-loop lama
+    // tidak ikut memengaruhi pengujian ketika mode PID dipakai kembali.
+    left_target_mps_ = 0.0f;
+    right_target_mps_ = 0.0f;
+    resetControllers();
+    left_driver_.setOutput(left_output);
+    right_driver_.setOutput(right_output);
+}
+
 void MotorControlService::setVelocityTargets(float left_mps, float right_mps)
 {
     left_target_mps_ = clampWheelSpeed(left_mps);
