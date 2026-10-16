@@ -1,7 +1,5 @@
 #include "config/MotorHardwareConfig.hpp"
-#include "driver/imu/IMUDriver.hpp"
 #include "driver/motor/MotorEncoderDriver.hpp"
-#include "service/heading/HeadingService.hpp"
 #include "service/motor/MotorControlService.hpp"
 
 #include "esp_err.h"
@@ -16,45 +14,17 @@ constexpr TickType_t CONTROL_PERIOD = pdMS_TO_TICKS(50);
 constexpr float CONTROL_DT_S = 0.05f;
 constexpr float LOW_TEST_SPEED_RPM = 30.0f;
 constexpr float TURN_TEST_SPEED_RPM = 20.0f;
-constexpr int IMU_TEST_DURATION_MS = 10000;
-constexpr bool RUN_MOTOR_TEST_AFTER_IMU = false;
+constexpr int SAFE_START_DELAY_MS = 5000;
+constexpr int STOP_BETWEEN_PHASES_MS = 1500;
 
-void runImuReadTest(
-    minicar::service::MotorControlService& motor_service,
-    minicar::service::HeadingService& heading_service)
+void waitWithMotorStopped(minicar::service::MotorControlService& motor_service)
 {
-    ESP_LOGI(TAG, "PHASE=imu_read_test duration_ms=%d motor=STOP", IMU_TEST_DURATION_MS);
-    ESP_LOGI(TAG, "Putar chassis perlahan ke kanan lalu kiri; amati tanda heading_deg dan yaw_dps");
-
     motor_service.stopMotor();
-    heading_service.resetHeadingReference();
-
-    const int steps = IMU_TEST_DURATION_MS / static_cast<int>(CONTROL_DT_S * 1000.0f);
-    for (int i = 0; i < steps; ++i) {
-        heading_service.updateHeading(CONTROL_DT_S);
-
-        if ((i % 5) == 0) {
-            ESP_LOGI(
-                TAG,
-                "phase=imu_read_test heading_deg=%.2f yaw_dps=%.2f motor=STOP",
-                static_cast<double>(heading_service.getHeadingDeg()),
-                static_cast<double>(heading_service.getYawRateDps()));
-        }
-
-        vTaskDelay(CONTROL_PERIOD);
-    }
-
-    motor_service.stopMotor();
-    ESP_LOGI(
-        TAG,
-        "PHASE=imu_read_test DONE heading_deg=%.2f yaw_dps=%.2f motor=STOP",
-        static_cast<double>(heading_service.getHeadingDeg()),
-        static_cast<double>(heading_service.getYawRateDps()));
+    vTaskDelay(pdMS_TO_TICKS(STOP_BETWEEN_PHASES_MS));
 }
 
 void runPhase(
     minicar::service::MotorControlService& motor_service,
-    minicar::service::HeadingService& heading_service,
     const char* phase,
     float left_target_rpm,
     float right_target_rpm,
@@ -70,23 +40,22 @@ void runPhase(
 
     const int steps = duration_ms / static_cast<int>(CONTROL_DT_S * 1000.0f);
     for (int i = 0; i < steps; ++i) {
-        heading_service.updateHeading(CONTROL_DT_S);
         motor_service.refreshFeedback();
         motor_service.applyControl(CONTROL_DT_S);
 
         if ((i % 5) == 0) {
             ESP_LOGI(
                 TAG,
-                "phase=%s left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f left_mps=%.3f right_mps=%.3f heading_deg=%.2f yaw_dps=%.2f",
+                "phase=%s target_left_rpm=%.2f target_right_rpm=%.2f left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f left_mps=%.3f right_mps=%.3f",
                 phase,
+                static_cast<double>(left_target_rpm),
+                static_cast<double>(right_target_rpm),
                 static_cast<long>(motor_service.getLeftTicks()),
                 static_cast<long>(motor_service.getRightTicks()),
                 static_cast<double>(motor_service.getLeftRPM()),
                 static_cast<double>(motor_service.getRightRPM()),
                 static_cast<double>(motor_service.getLeftVelocityMps()),
-                static_cast<double>(motor_service.getRightVelocityMps()),
-                static_cast<double>(heading_service.getHeadingDeg()),
-                static_cast<double>(heading_service.getYawRateDps()));
+                static_cast<double>(motor_service.getRightVelocityMps()));
         }
 
         vTaskDelay(CONTROL_PERIOD);
@@ -96,16 +65,14 @@ void runPhase(
     motor_service.refreshFeedback();
     ESP_LOGI(
         TAG,
-        "PHASE=%s DONE left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f left_mps=%.3f right_mps=%.3f heading_deg=%.2f yaw_dps=%.2f",
+        "PHASE=%s DONE left_ticks=%ld right_ticks=%ld left_rpm=%.2f right_rpm=%.2f left_mps=%.3f right_mps=%.3f",
         phase,
         static_cast<long>(motor_service.getLeftTicks()),
         static_cast<long>(motor_service.getRightTicks()),
         static_cast<double>(motor_service.getLeftRPM()),
         static_cast<double>(motor_service.getRightRPM()),
         static_cast<double>(motor_service.getLeftVelocityMps()),
-        static_cast<double>(motor_service.getRightVelocityMps()),
-        static_cast<double>(heading_service.getHeadingDeg()),
-        static_cast<double>(heading_service.getYawRateDps()));
+        static_cast<double>(motor_service.getRightVelocityMps()));
 }
 
 }  // namespace
@@ -119,9 +86,7 @@ extern "C" void app_main(void)
 
     static driver::MotorEncoderDriver left_motor(config::motor_hardware::LEFT_MOTOR);
     static driver::MotorEncoderDriver right_motor(config::motor_hardware::RIGHT_MOTOR);
-    static driver::IMUDriver imu_driver;
     static service::MotorControlService motor_service(left_motor, right_motor);
-    static service::HeadingService heading_service(imu_driver);
 
     const esp_err_t result = motor_service.init();
     if (result != ESP_OK) {
@@ -130,35 +95,27 @@ extern "C" void app_main(void)
         return;
     }
 
-    const esp_err_t heading_result = heading_service.init();
-    if (heading_result != ESP_OK) {
-        motor_service.stopMotor();
-        ESP_LOGE(TAG, "heading service init failed: %s", esp_err_to_name(heading_result));
-        return;
-    }
-
-    ESP_LOGI(TAG, "Boot safe stop 2s: motor harus diam");
+    ESP_LOGI(TAG, "Boot safe stop %d ms: motor harus diam", SAFE_START_DELAY_MS);
     motor_service.stopMotor();
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    vTaskDelay(pdMS_TO_TICKS(SAFE_START_DELAY_MS));
 
-    runImuReadTest(motor_service, heading_service);
-    if (!RUN_MOTOR_TEST_AFTER_IMU) {
-        ESP_LOGI(TAG, "IMU-only test complete. Motor test disabled by RUN_MOTOR_TEST_AFTER_IMU=false");
-        motor_service.stopMotor();
-        return;
-    }
-
-    heading_service.resetHeadingReference();
-
-    runPhase(motor_service, heading_service, "both_forward_low", LOW_TEST_SPEED_RPM, LOW_TEST_SPEED_RPM, 3000);
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    runPhase(motor_service, heading_service, "both_reverse_low", -LOW_TEST_SPEED_RPM, -LOW_TEST_SPEED_RPM, 3000);
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    runPhase(motor_service, heading_service, "pivot_right_low", TURN_TEST_SPEED_RPM, -TURN_TEST_SPEED_RPM, 2000);
-    vTaskDelay(pdMS_TO_TICKS(1500));
-    runPhase(motor_service, heading_service, "pivot_left_low", -TURN_TEST_SPEED_RPM, TURN_TEST_SPEED_RPM, 2000);
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    runPhase(motor_service, "left_forward_low", LOW_TEST_SPEED_RPM, 0.0f, 2000);
+    waitWithMotorStopped(motor_service);
+    runPhase(motor_service, "right_forward_low", 0.0f, LOW_TEST_SPEED_RPM, 2000);
+    waitWithMotorStopped(motor_service);
+    runPhase(motor_service, "both_forward_low", LOW_TEST_SPEED_RPM, LOW_TEST_SPEED_RPM, 3000);
+    waitWithMotorStopped(motor_service);
+    runPhase(motor_service, "both_reverse_low", -LOW_TEST_SPEED_RPM, -LOW_TEST_SPEED_RPM, 3000);
+    waitWithMotorStopped(motor_service);
+    runPhase(motor_service, "pivot_right_low", TURN_TEST_SPEED_RPM, -TURN_TEST_SPEED_RPM, 2000);
+    waitWithMotorStopped(motor_service);
+    runPhase(motor_service, "pivot_left_low", -TURN_TEST_SPEED_RPM, TURN_TEST_SPEED_RPM, 2000);
 
     ESP_LOGI(TAG, "Bench sequence complete. Motor stopped; logs above menjadi bukti arah, ticks, dan feedback");
     motor_service.stopMotor();
+
+    while (true) {
+        ESP_LOGI(TAG, "TEST COMPLETE: motor tetap STOP. Tekan EN/RESET untuk mengulang");
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
 }
