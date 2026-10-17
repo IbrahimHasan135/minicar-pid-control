@@ -53,8 +53,8 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
 // kendaraan bergerak maju dan feedback RPM tetap positif.
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
     MotorPins{
-        GPIO_NUM_18,  // RPWM
-        GPIO_NUM_19,  // LPWM
+        GPIO_NUM_22,  // RPWM - temporary Arduino-equivalent diagnostic pin
+        GPIO_NUM_23,  // LPWM - temporary Arduino-equivalent diagnostic pin
         GPIO_NUM_NC,  // R_EN -> regulated 5 V untuk bench
         GPIO_NUM_NC,  // L_EN -> regulated 5 V untuk bench
         GPIO_NUM_16,  // Encoder A

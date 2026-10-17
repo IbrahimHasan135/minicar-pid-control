@@ -84,7 +84,8 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "OPEN-LOOP MOTOR BENCH TEST: roda wajib terangkat dan emergency power-off siap");
     ESP_LOGI(TAG, "PID TIDAK DIGUNAKAN. R_EN/L_EN kedua BTS harus terhubung langsung ke regulated 5 V");
-    ESP_LOGI(TAG, "PWM kiri RPWM/LPWM=25/26; PWM kanan RPWM/LPWM=18/19; PWM=1 kHz 8-bit");
+    ESP_LOGI(TAG, "PWM kiri RPWM/LPWM=25/26; PWM kanan RPWM/LPWM=22/23; PWM=1 kHz 8-bit");
+    ESP_LOGW(TAG, "GPIO22 dipakai PWM kanan selama diagnosis; GY-511 wajib dilepas karena SCL IMU juga GPIO22");
 
     static driver::MotorEncoderDriver left_motor(config::motor_hardware::LEFT_MOTOR);
     static driver::MotorEncoderDriver right_motor(config::motor_hardware::RIGHT_MOTOR);

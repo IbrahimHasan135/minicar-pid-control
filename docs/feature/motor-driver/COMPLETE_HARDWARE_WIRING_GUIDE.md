@@ -56,14 +56,14 @@ secara independen ketika kendaraan berbelok.
 | BTS7960 kiri | L_EN | 5 V langsung, bukan GPIO |
 | Encoder kiri | Phase A | 32 |
 | Encoder kiri | Phase B | 33 |
-| BTS7960 kanan | RPWM | 18 |
-| BTS7960 kanan | LPWM | 19 |
+| BTS7960 kanan | RPWM | 22 (sementara untuk diagnosis Arduino-equivalent) |
+| BTS7960 kanan | LPWM | 23 (sementara untuk diagnosis Arduino-equivalent) |
 | BTS7960 kanan | R_EN | 5 V langsung, bukan GPIO |
 | BTS7960 kanan | L_EN | 5 V langsung, bukan GPIO |
 | Encoder kanan | Phase A | 16 |
 | Encoder kanan | Phase B | 17 |
 | GY-511 | SDA | 21 |
-| GY-511 | SCL | 22 |
+| GY-511 | SCL | 22 (konflik; sensor wajib dilepas selama tes motor kanan) |
 
 GPIO16 dan GPIO17 sesuai untuk ESP32-WROOM. Jika modul pada board bertuliskan
 `ESP32-WROVER`, periksa kembali karena beberapa varian WROVER memakai pin
@@ -155,8 +155,8 @@ Motor kiri B -> level aman 3,3 V -> ESP32 GPIO33
 
 | Pin BTS7960 kanan | Sambungkan ke | Fungsi |
 |---|---|---|
-| RPWM | ESP32 GPIO18 | PWM arah pertama |
-| LPWM | ESP32 GPIO19 | PWM arah sebaliknya |
+| RPWM | ESP32 GPIO22 | PWM arah pertama; sama seperti sketch Arduino |
+| LPWM | ESP32 GPIO23 | PWM arah sebaliknya; sama seperti sketch Arduino |
 | R_EN | Regulated 5 V logic | Selalu enabled selama bench test |
 | L_EN | Regulated 5 V logic | Selalu enabled selama bench test |
 | VCC | Regulated 5 V logic | Bukan 12 V |
@@ -185,8 +185,8 @@ Motor kiri B -> level aman 3,3 V -> ESP32 GPIO33
 Ringkasan:
 
 ```text
-ESP32 18 -> RPWM BTS kanan
-ESP32 19 -> LPWM BTS kanan
+ESP32 22 -> RPWM BTS kanan
+ESP32 23 -> LPWM BTS kanan
 Regulated 5 V -> R_EN BTS kanan
 Regulated 5 V -> L_EN BTS kanan
 
@@ -202,6 +202,12 @@ Motor kanan B -> level aman 3,3 V -> ESP32 GPIO17
 Motor kanan dipasang mirror terhadap motor kiri. Firmware saat ini memakai
 `invert_motor=true` dan `invert_encoder=true` untuk sisi kanan agar command
 positif dan RPM positif tetap berarti kendaraan bergerak maju.
+
+Mapping GPIO22/23 ini bersifat sementara untuk menyamakan tes motor kanan
+dengan sketch Arduino yang telah terbukti. GPIO22 juga merupakan SCL GY-511,
+sehingga GY-511 wajib dilepas selama tes ini. Jangan menghubungkan SCL sensor
+dan RPWM BTS ke GPIO22 secara bersamaan. Setelah power stage motor dinyatakan
+lulus, salah satu fungsi harus dipindahkan ke GPIO lain sebelum integrasi IMU.
 
 ## 6. Wiring GY-511
 
@@ -225,7 +231,9 @@ Pasang GY-511 sejauh mungkin dari motor, BTS7960, kabel arus besar, magnet,
 dan rangka besi. Medan magnet motor dapat mengganggu heading kompas.
 
 Firmware bench test motor saat ini tidak membutuhkan GY-511. Sensor ini dapat
-dilepas selama validasi awal motor dan encoder.
+dilepas selama validasi awal motor dan encoder. Pada mapping diagnostic
+GPIO22/23 saat ini, GY-511 **wajib dilepas** karena GPIO22 digunakan sebagai
+RPWM motor kanan.
 
 ## 7. Distribusi Daya yang Benar
 
@@ -365,8 +373,8 @@ PHASE=left_forward_100pct DONE motor=STOP ...
 ```
 
 Untuk motor kanan, konfigurasi `invert_motor=true`. Karena itu command maju
-kanan `+1.00` memang akan terlihat sebagai duty maksimum pada GPIO19 (LPWM),
-bukan GPIO18 (RPWM). Ini mengompensasi pemasangan motor kanan yang mirror.
+kanan `+1.00` memang akan terlihat sebagai duty maksimum pada GPIO23 (LPWM),
+bukan GPIO22 (RPWM). Ini mengompensasi pemasangan motor kanan yang mirror.
 
 Jika log `PWM applied` menunjukkan duty `255` tetapi motor tetap diam, ukur
 saat fase aktif: GPIO PWM aktif sekitar 3,3 V, GPIO arah lain 0 V, R_EN/L_EN/VCC
