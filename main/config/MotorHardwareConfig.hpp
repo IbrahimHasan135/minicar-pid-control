@@ -48,9 +48,9 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
     false,
 };
 
-// BTS7960 dan encoder roda kanan. Motor kanan dipasang mirror terhadap kiri,
-// sehingga arah motor dan encoder dibalik agar command positif tetap berarti
-// kendaraan bergerak maju dan feedback RPM tetap positif.
+// Konfigurasi sementara untuk diagnosis satu BTS kanan. PWM dan arah command
+// sengaja disamakan langsung dengan sketch Arduino: +1 mengaktifkan RPWM dan
+// -1 mengaktifkan LPWM. Inversi mekanik dipulihkan setelah power stage lulus.
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
     MotorPins{
         GPIO_NUM_22,  // RPWM - temporary Arduino-equivalent diagnostic pin
@@ -63,7 +63,7 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
     LEDC_CHANNEL_2,
     LEDC_CHANNEL_3,
     ENCODER_COUNTS_PER_OUTPUT_REV_ESTIMATE,
-    true,
+    false,  // diagnostic: samakan langsung command dengan sketch Arduino
     true,
 };
 

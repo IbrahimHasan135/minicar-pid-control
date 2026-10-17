@@ -324,22 +324,20 @@ idf.py build
 idf.py -p COM3 flash monitor
 ```
 
-Firmware diagnostic open-loop tidak memanggil PID. Motor ditahan STOP selama
-5 detik setelah boot, lalu output normalized diteruskan dari main ke service
-dan driver. Tes dimulai dari daya maksimum agar dapat membedakan masalah
-starting torque dari masalah jalur PWM/power:
+Firmware diagnostic saat ini hanya menginisialisasi satu driver: BTS7960 motor
+kanan pada GPIO22/23. Motor kiri, GPIO25/26, service, PID, dan IMU tidak
+digunakan. Motor ditahan STOP selama 5 detik setelah boot, kemudian menjalankan:
 
-| Fase | Output kiri | Output kanan | Durasi |
+| Fase | RPWM GPIO22 | LPWM GPIO23 | Durasi |
 |---|---:|---:|---:|
-| `left_forward_100pct` | +1,0 (100%) | 0 | 2 s |
-| `left_reverse_100pct` | -1,0 (100%) | 0 | 2 s |
-| `right_forward_100pct` | 0 | +1,0 (100%) | 2 s |
-| `right_reverse_100pct` | 0 | -1,0 (100%) | 2 s |
+| `rpwm_gpio22_100pct` | 255 (100%) | 0 | 2 s |
+| STOP | 0 | 0 | 3 s |
+| `lpwm_gpio23_100pct` | 0 | 255 (100%) | 2 s |
+| STOP | 0 | 0 | 3 s |
 
-Setiap fase dipisahkan STOP selama 3 detik. Setelah sisi kanan selesai, urutan
-otomatis mengulang dan nomor `CYCLE` bertambah. Hanya satu motor aktif pada
-satu waktu supaya diagnosis kiri/kanan jelas dan lonjakan arus baterai lebih
-terbatas.
+Urutan otomatis mengulang dan nomor `CYCLE` bertambah. Ini sengaja dibuat
+setara dengan fungsi `setMotorSpeed()` pada sketch Arduino, tanpa dual motor
+dan tanpa lapisan service, untuk mengisolasi driver dan power stage dahulu.
 
 PWM menggunakan 1 kHz dan resolusi 8-bit. Input `+1.0` atau `-1.0` menghasilkan
 duty maksimum `255/255` pada salah satu input BTS7960, sedangkan input arah
@@ -357,24 +355,29 @@ BTS hanya memasok rangkaian logika dan bukan input pengatur kecepatan.
 
 | Fase | Gerakan fisik | Feedback yang diharapkan |
 |---|---|---|
-| kiri maju | hanya roda kiri maju | ticks/RPM kiri positif |
-| kanan maju | hanya roda kanan maju | ticks/RPM kanan positif |
-| kiri mundur | hanya roda kiri mundur | ticks/RPM kiri negatif |
-| kanan mundur | hanya roda kanan mundur | ticks/RPM kanan negatif |
+| RPWM GPIO22 100% | motor kanan berputar arah pertama | duty GPIO22=255 dan ticks berubah |
+| LPWM GPIO23 100% | motor kanan berputar arah sebaliknya | duty GPIO23=255 dan ticks berubah berlawanan |
 
 Contoh log:
 
 ```text
-FULL-POWER TEST CYCLE=1 START
-PHASE=left_forward_100pct left_output=1.00 right_output=0.00 duration_ms=2000
-PWM applied: command=1.00 rpwm_gpio=25 duty=255 lpwm_gpio=26 duty=0 max=255
-phase=left_forward_100pct left_ticks=... right_ticks=... left_rpm=... right_rpm=...
-PHASE=left_forward_100pct DONE motor=STOP ...
+SINGLE-MOTOR TEST CYCLE=1 START
+PHASE=rpwm_gpio22_100pct command=1.00 duration_ms=2000
+PWM applied: command=1.00 rpwm_gpio=22 duty=255 lpwm_gpio=23 duty=0 max=255
+PHASE=rpwm_gpio22_100pct DONE; motor STOP
+PHASE=lpwm_gpio23_100pct command=-1.00 duration_ms=2000
+PWM applied: command=-1.00 rpwm_gpio=22 duty=0 lpwm_gpio=23 duty=255 max=255
 ```
 
-Untuk motor kanan, konfigurasi `invert_motor=true`. Karena itu command maju
-kanan `+1.00` memang akan terlihat sebagai duty maksimum pada GPIO23 (LPWM),
-bukan GPIO22 (RPWM). Ini mengompensasi pemasangan motor kanan yang mirror.
+Untuk diagnosis ini `invert_motor=false`, agar command dan pin sama persis
+dengan sketch Arduino. Arah fisik roda belum dipakai sebagai keputusan; yang
+divalidasi lebih dahulu adalah kedua output arah dan kemampuan motor bergerak.
+
+Log firmware sebelumnya membaca `ledc_get_duty()` langsung setelah
+`ledc_update_duty()`. ESP-IDF menjelaskan bahwa nilai baru belum tentu terlihat
+pada siklus PWM yang sama, sehingga log dapat mencetak `0` walaupun update baru
+dijadwalkan. Driver sekarang memakai `ledc_set_duty_and_update()`, yang kembali
+setelah duty diterapkan, sehingga log `255` dapat dipakai sebagai bukti internal.
 
 Jika log `PWM applied` menunjukkan duty `255` tetapi motor tetap diam, ukur
 saat fase aktif: GPIO PWM aktif sekitar 3,3 V, GPIO arah lain 0 V, R_EN/L_EN/VCC
