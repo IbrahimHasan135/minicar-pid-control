@@ -316,27 +316,34 @@ idf.py build
 idf.py -p COM3 flash monitor
 ```
 
-Firmware open-loop tidak memanggil PID. Motor ditahan STOP selama 5 detik
-setelah boot, lalu output normalized diteruskan dari main ke service dan driver:
+Firmware diagnostic open-loop tidak memanggil PID. Motor ditahan STOP selama
+5 detik setelah boot, lalu output normalized diteruskan dari main ke service
+dan driver. Tes dimulai dari daya maksimum agar dapat membedakan masalah
+starting torque dari masalah jalur PWM/power:
 
 | Fase | Output kiri | Output kanan | Durasi |
 |---|---:|---:|---:|
-| `left_forward_20pct` | +20% | 0% | 1,5 s |
-| `left_forward_35pct` | +35% | 0% | 1,5 s |
-| `left_forward_50pct` | +50% | 0% | 1,5 s |
-| `left_reverse_35pct` | -35% | 0% | 1,5 s |
-| `right_forward_20pct` | 0% | +20% | 1,5 s |
-| `right_forward_35pct` | 0% | +35% | 1,5 s |
-| `right_forward_50pct` | 0% | +50% | 1,5 s |
-| `right_reverse_35pct` | 0% | -35% | 1,5 s |
-| `both_forward_35pct` | +35% | +35% | 2 s |
-| `both_reverse_35pct` | -35% | -35% | 2 s |
+| `left_forward_100pct` | +1,0 (100%) | 0 | 2 s |
+| `left_reverse_100pct` | -1,0 (100%) | 0 | 2 s |
+| `right_forward_100pct` | 0 | +1,0 (100%) | 2 s |
+| `right_reverse_100pct` | 0 | -1,0 (100%) | 2 s |
 
-Setiap fase dipisahkan STOP selama 1,5 detik. PWM bench menggunakan 1 kHz,
-8-bit agar sama dengan setup Arduino yang sudah terbukti.
+Setiap fase dipisahkan STOP selama 3 detik. Setelah sisi kanan selesai, urutan
+otomatis mengulang dan nomor `CYCLE` bertambah. Hanya satu motor aktif pada
+satu waktu supaya diagnosis kiri/kanan jelas dan lonjakan arus baterai lebih
+terbatas.
 
-Setelah seluruh fase selesai, firmware menjaga motor STOP. Tekan `EN/RESET`
-untuk mengulang.
+PWM menggunakan 1 kHz dan resolusi 8-bit. Input `+1.0` atau `-1.0` menghasilkan
+duty maksimum `255/255` pada salah satu input BTS7960, sedangkan input arah
+lain tetap `0`. Jika supply `B+`--`B-` adalah 12 V, terminal motor pada duty
+100% seharusnya mendekati 12 V dengan polaritas sesuai arah, dikurangi voltage
+drop driver dan kabel. Input normalized ini mengatur duty RPWM/LPWM; pin VCC
+BTS hanya memasok rangkaian logika dan bukan input pengatur kecepatan.
+
+> PERINGATAN: roda wajib terangkat. Jangan menahan poros/roda dan jangan
+> menjalankan tes bila mekanik macet. Pada duty 100%, stall current dapat
+> merusak motor, BTS7960, kabel, konektor, atau baterai. Siapkan pemutus daya
+> dan cabut baterai untuk menghentikan loop setelah bukti diperoleh.
 
 ## 11. Kriteria Hasil yang Benar
 
@@ -344,18 +351,28 @@ untuk mengulang.
 |---|---|---|
 | kiri maju | hanya roda kiri maju | ticks/RPM kiri positif |
 | kanan maju | hanya roda kanan maju | ticks/RPM kanan positif |
-| keduanya maju | mobil bergerak maju | kedua RPM positif |
-| keduanya mundur | mobil bergerak mundur | kedua RPM negatif |
-| pivot kanan | kiri maju, kanan mundur | kiri positif, kanan negatif |
-| pivot kiri | kiri mundur, kanan maju | kiri negatif, kanan positif |
+| kiri mundur | hanya roda kiri mundur | ticks/RPM kiri negatif |
+| kanan mundur | hanya roda kanan mundur | ticks/RPM kanan negatif |
 
 Contoh log:
 
 ```text
-PHASE=both_forward_35pct left_output=0.35 right_output=0.35 duration_ms=2000
-phase=both_forward_35pct left_ticks=... right_ticks=... left_rpm=... right_rpm=...
-TEST COMPLETE: motor tetap STOP. Tekan EN/RESET untuk mengulang
+FULL-POWER TEST CYCLE=1 START
+PHASE=left_forward_100pct left_output=1.00 right_output=0.00 duration_ms=2000
+PWM applied: command=1.00 rpwm_gpio=25 duty=255 lpwm_gpio=26 duty=0 max=255
+phase=left_forward_100pct left_ticks=... right_ticks=... left_rpm=... right_rpm=...
+PHASE=left_forward_100pct DONE motor=STOP ...
 ```
+
+Untuk motor kanan, konfigurasi `invert_motor=true`. Karena itu command maju
+kanan `+1.00` memang akan terlihat sebagai duty maksimum pada GPIO19 (LPWM),
+bukan GPIO18 (RPWM). Ini mengompensasi pemasangan motor kanan yang mirror.
+
+Jika log `PWM applied` menunjukkan duty `255` tetapi motor tetap diam, ukur
+saat fase aktif: GPIO PWM aktif sekitar 3,3 V, GPIO arah lain 0 V, R_EN/L_EN/VCC
+sekitar 5 V, B+--B- sekitar 12 V, dan M+--M- mendekati 12 V. GPIO benar tetapi
+M+--M- tetap 0 V menunjuk ke enable, supply, wiring, atau modul BTS; M+--M-
+benar tetapi motor diam menunjuk ke kabel motor/konektor/mekanik.
 
 Jika arah fisik roda salah, koreksi `invert_motor` untuk sisi tersebut. Jika
 arah fisik sudah benar tetapi tanda ticks/RPM salah, koreksi `invert_encoder`.
@@ -393,12 +410,14 @@ Ticks satu putaran roda kanan:
 RPM no-load kiri/kanan:
 Duty minimum motor kiri mulai bergerak:
 Duty minimum motor kanan mulai bergerak:
-Arah left_forward_35pct:
-Arah left_reverse_35pct:
-Arah right_forward_35pct:
-Arah right_reverse_35pct:
-Arah both_forward_35pct:
-Arah both_reverse_35pct:
+Log duty GPIO kiri maju/mundur:
+Log duty GPIO kanan maju/mundur:
+Arah left_forward_100pct:
+Arah left_reverse_100pct:
+Arah right_forward_100pct:
+Arah right_reverse_100pct:
+Tegangan M+--M- kiri saat aktif:
+Tegangan M+--M- kanan saat aktif:
 Ada/tidak brownout:
 Temperatur motor/BTS setelah test:
 Keputusan invert_motor kiri/kanan:

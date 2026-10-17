@@ -71,20 +71,35 @@ esp_err_t MotorEncoderDriver::init()
     return ESP_OK;
 }
 
-void MotorEncoderDriver::setOutput(float output)
+esp_err_t MotorEncoderDriver::setOutput(float output)
 {
-    if (!initialized_ || !std::isfinite(output)) {
+    if (!initialized_) {
         stop();
-        return;
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!std::isfinite(output)) {
+        stop();
+        return ESP_ERR_INVALID_ARG;
     }
 
     const float clamped_output = std::clamp(output, -1.0f, 1.0f);
-    if (writePwm(clamped_output) != ESP_OK) {
+    const esp_err_t result = writePwm(clamped_output);
+    if (result != ESP_OK) {
         stop();
-        return;
+        return result;
     }
 
     output_ = clamped_output;
+    ESP_LOGI(
+        TAG,
+        "PWM applied: command=%.2f rpwm_gpio=%d duty=%lu lpwm_gpio=%d duty=%lu max=%u",
+        static_cast<double>(clamped_output),
+        config_.pins.rpwm_gpio,
+        static_cast<unsigned long>(ledc_get_duty(config::motor_hardware::PWM_SPEED_MODE, config_.rpwm_channel)),
+        config_.pins.lpwm_gpio,
+        static_cast<unsigned long>(ledc_get_duty(config::motor_hardware::PWM_SPEED_MODE, config_.lpwm_channel)),
+        config::motor_hardware::PWM_MAX_DUTY);
+    return ESP_OK;
 }
 
 int32_t MotorEncoderDriver::getTicks() const

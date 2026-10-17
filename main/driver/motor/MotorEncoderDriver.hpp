@@ -17,7 +17,7 @@ public:
 
     esp_err_t init();
 
-    void setOutput(float output);
+    esp_err_t setOutput(float output);
     int32_t getTicks() const;
     float getRPM() const;
 

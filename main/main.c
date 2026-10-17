@@ -12,10 +12,10 @@ namespace {
 constexpr const char* TAG = "MotorDriverTest";
 constexpr TickType_t CONTROL_PERIOD = pdMS_TO_TICKS(50);
 constexpr int SAFE_START_DELAY_MS = 5000;
-constexpr int STOP_BETWEEN_PHASES_MS = 1500;
-constexpr float OUTPUT_LOW = 0.20f;
-constexpr float OUTPUT_MEDIUM = 0.35f;
-constexpr float OUTPUT_HIGH = 0.50f;
+constexpr int STOP_BETWEEN_PHASES_MS = 3000;
+constexpr int FULL_POWER_DURATION_MS = 2000;
+constexpr float FULL_FORWARD = 1.0f;
+constexpr float FULL_REVERSE = -1.0f;
 
 void waitWithMotorStopped(minicar::service::MotorControlService& motor_service)
 {
@@ -23,7 +23,7 @@ void waitWithMotorStopped(minicar::service::MotorControlService& motor_service)
     vTaskDelay(pdMS_TO_TICKS(STOP_BETWEEN_PHASES_MS));
 }
 
-void runOpenLoopPhase(
+esp_err_t runOpenLoopPhase(
     minicar::service::MotorControlService& motor_service,
     const char* phase,
     float left_output,
@@ -36,7 +36,12 @@ void runOpenLoopPhase(
         static_cast<double>(right_output),
         duration_ms);
 
-    motor_service.setOpenLoopOutputs(left_output, right_output);
+    const esp_err_t output_result = motor_service.setOpenLoopOutputs(left_output, right_output);
+    if (output_result != ESP_OK) {
+        motor_service.stopMotor();
+        ESP_LOGE(TAG, "PHASE=%s PWM command failed: %s", phase, esp_err_to_name(output_result));
+        return output_result;
+    }
 
     const int steps = duration_ms / static_cast<int>(CONTROL_PERIOD * portTICK_PERIOD_MS);
     for (int i = 0; i < steps; ++i) {
@@ -68,6 +73,7 @@ void runOpenLoopPhase(
         static_cast<long>(motor_service.getRightTicks()),
         static_cast<double>(motor_service.getLeftRPM()),
         static_cast<double>(motor_service.getRightRPM()));
+    return ESP_OK;
 }
 
 }  // namespace
@@ -95,31 +101,34 @@ extern "C" void app_main(void)
     motor_service.stopMotor();
     vTaskDelay(pdMS_TO_TICKS(SAFE_START_DELAY_MS));
 
-    runOpenLoopPhase(motor_service, "left_forward_20pct", OUTPUT_LOW, 0.0f, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "left_forward_35pct", OUTPUT_MEDIUM, 0.0f, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "left_forward_50pct", OUTPUT_HIGH, 0.0f, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "left_reverse_35pct", -OUTPUT_MEDIUM, 0.0f, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "right_forward_20pct", 0.0f, OUTPUT_LOW, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "right_forward_35pct", 0.0f, OUTPUT_MEDIUM, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "right_forward_50pct", 0.0f, OUTPUT_HIGH, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "right_reverse_35pct", 0.0f, -OUTPUT_MEDIUM, 1500);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "both_forward_35pct", OUTPUT_MEDIUM, OUTPUT_MEDIUM, 2000);
-    waitWithMotorStopped(motor_service);
-    runOpenLoopPhase(motor_service, "both_reverse_35pct", -OUTPUT_MEDIUM, -OUTPUT_MEDIUM, 2000);
-
-    ESP_LOGI(TAG, "Open-loop bench sequence complete. Motor stopped; PID tidak digunakan");
-    motor_service.stopMotor();
-
+    unsigned int cycle = 1;
     while (true) {
-        ESP_LOGI(TAG, "TEST COMPLETE: motor tetap STOP. Tekan EN/RESET untuk mengulang");
+        ESP_LOGI(TAG, "FULL-POWER TEST CYCLE=%u START", cycle);
+
+        if (runOpenLoopPhase(motor_service, "left_forward_100pct", FULL_FORWARD, 0.0f, FULL_POWER_DURATION_MS) != ESP_OK) {
+            break;
+        }
+        waitWithMotorStopped(motor_service);
+        if (runOpenLoopPhase(motor_service, "left_reverse_100pct", FULL_REVERSE, 0.0f, FULL_POWER_DURATION_MS) != ESP_OK) {
+            break;
+        }
+        waitWithMotorStopped(motor_service);
+        if (runOpenLoopPhase(motor_service, "right_forward_100pct", 0.0f, FULL_FORWARD, FULL_POWER_DURATION_MS) != ESP_OK) {
+            break;
+        }
+        waitWithMotorStopped(motor_service);
+        if (runOpenLoopPhase(motor_service, "right_reverse_100pct", 0.0f, FULL_REVERSE, FULL_POWER_DURATION_MS) != ESP_OK) {
+            break;
+        }
+        waitWithMotorStopped(motor_service);
+
+        ESP_LOGI(TAG, "FULL-POWER TEST CYCLE=%u DONE; motor STOP sebelum mengulang", cycle);
+        ++cycle;
+    }
+
+    motor_service.stopMotor();
+    while (true) {
+        ESP_LOGE(TAG, "FULL-POWER TEST ABORTED karena error PWM; motor tetap STOP");
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }

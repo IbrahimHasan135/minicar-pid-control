@@ -19,7 +19,7 @@ public:
     void reset() override;
 
     void refreshFeedback();
-    void setOpenLoopOutputs(float left_output, float right_output);
+    esp_err_t setOpenLoopOutputs(float left_output, float right_output);
     void setVelocityTargets(float left_mps, float right_mps);
     void setRpmTargets(float left_rpm, float right_rpm);
     void applyControl(float dt_s);
