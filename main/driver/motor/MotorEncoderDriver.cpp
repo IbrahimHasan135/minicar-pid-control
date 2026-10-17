@@ -7,6 +7,7 @@
 #include "driver/ledc.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "esp_timer.h"
 
 namespace minicar::driver {
@@ -90,6 +91,11 @@ esp_err_t MotorEncoderDriver::setOutput(float output)
     }
 
     output_ = clamped_output;
+
+    // ledc_get_duty() dapat masih membaca duty siklus sebelumnya tepat setelah
+    // ledc_update_duty(). Tunggu dua periode pada PWM 1 kHz agar log diagnostik
+    // merekam duty yang sudah diterapkan tanpa membutuhkan LEDC fade service.
+    esp_rom_delay_us(2000);
     ESP_LOGI(
         TAG,
         "PWM applied: command=%.2f rpwm_gpio=%d duty=%lu lpwm_gpio=%d duty=%lu max=%u",
@@ -310,14 +316,20 @@ esp_err_t MotorEncoderDriver::writePwm(float output)
     // Matikan sisi berlawanan lebih dulu. Urutan ini mencegah RPWM dan LPWM
     // aktif bersamaan sesaat ketika arah motor berubah.
     if (signed_output > 0.0f) {
-        ESP_RETURN_ON_ERROR(ledc_set_duty_and_update(PWM_SPEED_MODE, config_.lpwm_channel, 0U, 0U), TAG, "clear LPWM duty failed");
-        ESP_RETURN_ON_ERROR(ledc_set_duty_and_update(PWM_SPEED_MODE, config_.rpwm_channel, duty, 0U), TAG, "set RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, 0U), TAG, "clear LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, duty), TAG, "set RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
     } else if (signed_output < 0.0f) {
-        ESP_RETURN_ON_ERROR(ledc_set_duty_and_update(PWM_SPEED_MODE, config_.rpwm_channel, 0U, 0U), TAG, "clear RPWM duty failed");
-        ESP_RETURN_ON_ERROR(ledc_set_duty_and_update(PWM_SPEED_MODE, config_.lpwm_channel, duty, 0U), TAG, "set LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, 0U), TAG, "clear RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, duty), TAG, "set LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
     } else {
-        ESP_RETURN_ON_ERROR(ledc_set_duty_and_update(PWM_SPEED_MODE, config_.rpwm_channel, 0U, 0U), TAG, "clear RPWM duty failed");
-        ESP_RETURN_ON_ERROR(ledc_set_duty_and_update(PWM_SPEED_MODE, config_.lpwm_channel, 0U, 0U), TAG, "clear LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.rpwm_channel, 0U), TAG, "clear RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.rpwm_channel), TAG, "update RPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_set_duty(PWM_SPEED_MODE, config_.lpwm_channel, 0U), TAG, "clear LPWM duty failed");
+        ESP_RETURN_ON_ERROR(ledc_update_duty(PWM_SPEED_MODE, config_.lpwm_channel), TAG, "update LPWM duty failed");
     }
 
     return ESP_OK;

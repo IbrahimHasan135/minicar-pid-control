@@ -376,8 +376,9 @@ divalidasi lebih dahulu adalah kedua output arah dan kemampuan motor bergerak.
 Log firmware sebelumnya membaca `ledc_get_duty()` langsung setelah
 `ledc_update_duty()`. ESP-IDF menjelaskan bahwa nilai baru belum tentu terlihat
 pada siklus PWM yang sama, sehingga log dapat mencetak `0` walaupun update baru
-dijadwalkan. Driver sekarang memakai `ledc_set_duty_and_update()`, yang kembali
-setelah duty diterapkan, sehingga log `255` dapat dipakai sebagai bukti internal.
+dijadwalkan. Driver tetap memakai API dasar `ledc_set_duty()` dan
+`ledc_update_duty()` agar tidak membutuhkan fade service, lalu menunggu dua
+periode PWM sebelum membaca duty untuk log diagnostik.
 
 Jika log `PWM applied` menunjukkan duty `255` tetapi motor tetap diam, ukur
 saat fase aktif: GPIO PWM aktif sekitar 3,3 V, GPIO arah lain 0 V, R_EN/L_EN/VCC
