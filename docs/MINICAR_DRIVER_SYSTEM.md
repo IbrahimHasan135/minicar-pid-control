@@ -162,13 +162,18 @@ init()
     Configure I2C/SPI dan initialize IMU.
 
 getYawRateDps()
-    Return yaw rate dalam degree/second.
+    Return yaw rate dalam degree/second. Untuk sensor yang memiliki gyro,
+    nilai berasal dari gyro. Untuk GY-511/LSM303 tanpa gyro, nilai diturunkan
+    dari perubahan heading magnetometer terhadap waktu.
 
 isHealthy()
     Return true jika IMU siap dan pembacaan valid.
 ```
 
 `IMUDriver` tidak menghitung turn state machine. Heading integration dilakukan oleh `HeadingService`.
+Implementasi GY-511 memakai accelerometer untuk tilt compensation dan
+magnetometer untuk heading. Kalibrasi hard-iron/soft-iron tetap wajib dilakukan
+setelah sensor dipasang permanen pada chassis.
 
 ## 8. Serial Driver Contract
 
