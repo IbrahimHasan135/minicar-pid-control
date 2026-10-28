@@ -26,7 +26,7 @@ git push --set-upstream origin feat/motor-driver (bikin branch baru di origin ny
 
 aturan:
 git add -A
-git commit "comment"
+git commit -m "comment"
 git push
 
 
