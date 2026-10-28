@@ -30,8 +30,11 @@ private:
     PIDController heading_pid_;
 
     float heading_deg_{0.0f};
+    float absolute_heading_deg_{0.0f};
+    float heading_reference_deg_{0.0f};
     float yaw_rate_dps_{0.0f};
     bool initialized_{false};
+    bool has_heading_sample_{false};
 };
 
 }  // namespace minicar::service

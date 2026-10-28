@@ -17,8 +17,16 @@ HeadingService::HeadingService(driver::IMUDriver& imu)
 
 esp_err_t HeadingService::init()
 {
-    const esp_err_t result = imu_.init();
+    esp_err_t result = imu_.init();
+    if (result == ESP_OK) {
+        result = imu_.readHeadingDeg(absolute_heading_deg_);
+    }
+
     initialized_ = (result == ESP_OK);
+    has_heading_sample_ = initialized_;
+    heading_reference_deg_ = absolute_heading_deg_;
+    heading_deg_ = 0.0f;
+    yaw_rate_dps_ = 0.0f;
     return result;
 }
 
@@ -26,6 +34,7 @@ void HeadingService::reset()
 {
     heading_deg_ = 0.0f;
     yaw_rate_dps_ = 0.0f;
+    heading_reference_deg_ = absolute_heading_deg_;
     resetController();
 }
 
@@ -36,8 +45,26 @@ void HeadingService::updateHeading(float dt_s)
         return;
     }
 
-    yaw_rate_dps_ = imu_.getYawRateDps();
-    heading_deg_ = normalizeAngleDeg(heading_deg_ + (yaw_rate_dps_ * dt_s));
+    float new_absolute_heading_deg = 0.0f;
+    if (imu_.readHeadingDeg(new_absolute_heading_deg) != ESP_OK) {
+        yaw_rate_dps_ = 0.0f;
+        initialized_ = false;
+        return;
+    }
+
+    if (has_heading_sample_) {
+        const float raw_yaw_rate_dps = shortestAngleErrorDeg(
+            new_absolute_heading_deg,
+            absolute_heading_deg_) / dt_s;
+        constexpr float YAW_RATE_FILTER_ALPHA = 0.2f;
+        yaw_rate_dps_ += YAW_RATE_FILTER_ALPHA * (raw_yaw_rate_dps - yaw_rate_dps_);
+    } else {
+        has_heading_sample_ = true;
+        yaw_rate_dps_ = 0.0f;
+    }
+
+    absolute_heading_deg_ = new_absolute_heading_deg;
+    heading_deg_ = shortestAngleErrorDeg(absolute_heading_deg_, heading_reference_deg_);
 }
 
 float HeadingService::getHeadingDeg() const
@@ -61,6 +88,7 @@ void HeadingService::resetHeadingReference()
 {
     heading_deg_ = 0.0f;
     yaw_rate_dps_ = 0.0f;
+    heading_reference_deg_ = absolute_heading_deg_;
     resetController();
 }
 
