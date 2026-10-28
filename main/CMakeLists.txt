@@ -1,6 +1,10 @@
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    set_source_files_properties("main.c" PROPERTIES LANGUAGE CXX)
+endif()
+
 idf_component_register(
     SRCS
-        "app_main.cpp"
+        "main.c"
         "application/Mission.cpp"
         "driver/communication/SerialDriver.cpp"
         "driver/imu/IMUDriver.cpp"
@@ -20,6 +24,7 @@ idf_component_register(
     INCLUDE_DIRS
         "."
     REQUIRES
+        driver
         freertos
         log
 )
