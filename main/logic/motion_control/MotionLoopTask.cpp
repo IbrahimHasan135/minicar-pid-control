@@ -180,9 +180,11 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
         snapshot.target_heading_deg,
         dt_s);
 
+    // Positive heading is a right/clockwise turn. The left wheel must become
+    // faster than the right wheel to steer the vehicle back to that heading.
     motor_service_.setVelocityTargets(
-        base_speed_mps - heading_correction_mps,
-        base_speed_mps + heading_correction_mps);
+        base_speed_mps + heading_correction_mps,
+        base_speed_mps - heading_correction_mps);
 }
 
 void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_s)

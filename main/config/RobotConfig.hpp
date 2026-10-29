@@ -4,7 +4,9 @@ namespace minicar::config::robot {
 
 constexpr float WHEEL_DIAMETER_M = 0.065f;
 constexpr float WHEEL_BASE_M = 0.145f;
-constexpr int ENCODER_TICKS_PER_REV = 360;
+// Initial 25GA370 estimate: 11 pulse/motor-rev * gearbox 34 * quadrature x4.
+// Replace this with the measured count for exactly one wheel revolution.
+constexpr int ENCODER_TICKS_PER_REV = 1496;
 
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;

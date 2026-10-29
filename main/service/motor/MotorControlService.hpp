@@ -19,13 +19,17 @@ public:
     void reset() override;
 
     void refreshFeedback();
+    esp_err_t setOpenLoopOutputs(float left_output, float right_output);
     void setVelocityTargets(float left_mps, float right_mps);
+    void setRpmTargets(float left_rpm, float right_rpm);
     void applyControl(float dt_s);
     void stopMotor();
 
     float getLeftVelocityMps() const;
     float getRightVelocityMps() const;
     float getAverageSpeedMps() const;
+    float getLeftRPM() const;
+    float getRightRPM() const;
 
     int32_t getLeftTicks() const;
     int32_t getRightTicks() const;
@@ -46,6 +50,8 @@ private:
     float right_target_mps_{0.0f};
     float left_velocity_mps_{0.0f};
     float right_velocity_mps_{0.0f};
+    float left_rpm_{0.0f};
+    float right_rpm_{0.0f};
     int32_t left_ticks_{0};
     int32_t right_ticks_{0};
     bool initialized_{false};

@@ -42,6 +42,8 @@ void MotorControlService::reset()
     right_target_mps_ = 0.0f;
     left_velocity_mps_ = 0.0f;
     right_velocity_mps_ = 0.0f;
+    left_rpm_ = 0.0f;
+    right_rpm_ = 0.0f;
     left_ticks_ = 0;
     right_ticks_ = 0;
     resetControllers();
@@ -54,6 +56,8 @@ void MotorControlService::refreshFeedback()
     if (!initialized_) {
         left_velocity_mps_ = 0.0f;
         right_velocity_mps_ = 0.0f;
+        left_rpm_ = 0.0f;
+        right_rpm_ = 0.0f;
         left_ticks_ = 0;
         right_ticks_ = 0;
         return;
@@ -61,14 +65,44 @@ void MotorControlService::refreshFeedback()
 
     left_ticks_ = left_driver_.getTicks();
     right_ticks_ = right_driver_.getTicks();
-    left_velocity_mps_ = rpmToMps(left_driver_.getRPM());
-    right_velocity_mps_ = rpmToMps(right_driver_.getRPM());
+    left_rpm_ = left_driver_.getRPM();
+    right_rpm_ = right_driver_.getRPM();
+    left_velocity_mps_ = rpmToMps(left_rpm_);
+    right_velocity_mps_ = rpmToMps(right_rpm_);
+}
+
+esp_err_t MotorControlService::setOpenLoopOutputs(float left_output, float right_output)
+{
+    if (!initialized_) {
+        left_driver_.stop();
+        right_driver_.stop();
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Open-loop hanya untuk hardware bring-up. Pastikan state closed-loop lama
+    // tidak ikut memengaruhi pengujian ketika mode PID dipakai kembali.
+    left_target_mps_ = 0.0f;
+    right_target_mps_ = 0.0f;
+    resetControllers();
+    const esp_err_t left_result = left_driver_.setOutput(left_output);
+    const esp_err_t right_result = right_driver_.setOutput(right_output);
+    if (left_result != ESP_OK || right_result != ESP_OK) {
+        left_driver_.stop();
+        right_driver_.stop();
+        return left_result != ESP_OK ? left_result : right_result;
+    }
+    return ESP_OK;
 }
 
 void MotorControlService::setVelocityTargets(float left_mps, float right_mps)
 {
     left_target_mps_ = clampWheelSpeed(left_mps);
     right_target_mps_ = clampWheelSpeed(right_mps);
+}
+
+void MotorControlService::setRpmTargets(float left_rpm, float right_rpm)
+{
+    setVelocityTargets(rpmToMps(left_rpm), rpmToMps(right_rpm));
 }
 
 void MotorControlService::applyControl(float dt_s)
@@ -82,8 +116,11 @@ void MotorControlService::applyControl(float dt_s)
     const float left_output = left_speed_pid_.update(left_target_mps_, left_velocity_mps_, dt_s);
     const float right_output = right_speed_pid_.update(right_target_mps_, right_velocity_mps_, dt_s);
 
-    left_driver_.setOutput(left_output);
-    right_driver_.setOutput(right_output);
+    const esp_err_t left_result = left_driver_.setOutput(left_output);
+    const esp_err_t right_result = right_driver_.setOutput(right_output);
+    if (left_result != ESP_OK || right_result != ESP_OK) {
+        stopMotor();
+    }
 }
 
 void MotorControlService::stopMotor()
@@ -108,6 +145,16 @@ float MotorControlService::getRightVelocityMps() const
 float MotorControlService::getAverageSpeedMps() const
 {
     return (std::fabs(left_velocity_mps_) + std::fabs(right_velocity_mps_)) * 0.5f;
+}
+
+float MotorControlService::getLeftRPM() const
+{
+    return left_rpm_;
+}
+
+float MotorControlService::getRightRPM() const
+{
+    return right_rpm_;
 }
 
 int32_t MotorControlService::getLeftTicks() const
