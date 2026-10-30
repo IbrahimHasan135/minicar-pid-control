@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "logic/motion_control/MotionControlContext.hpp"
 #include "model/MotionCommand.hpp"
+#include "service/control/PIDController.hpp"
 #include "service/heading/HeadingService.hpp"
 #include "service/motor/MotorControlService.hpp"
 #include "service/odometry/OdometryService.hpp"
@@ -34,6 +35,7 @@ private:
     void handleTurn(const MotionControlSnapshot& snapshot, float dt_s);
     void stopAndIdle();
     void failSafeStop();
+    void applySpeedControl(float dt_s);
 
     bool servicesReady() const;
     bool isValidMove(const model::MotionCommand& command) const;
@@ -43,6 +45,10 @@ private:
     service::MotorControlService& motor_service_;
     service::HeadingService& heading_service_;
     service::OdometryService& odometry_service_;
+    service::PIDController left_speed_pid_;
+    service::PIDController right_speed_pid_;
+    float left_target_mps_{0.0f};
+    float right_target_mps_{0.0f};
 };
 
 }  // namespace minicar::logic::motion_control

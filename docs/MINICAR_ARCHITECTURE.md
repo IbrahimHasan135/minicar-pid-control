@@ -255,7 +255,8 @@ Responsibility:
 - start pending command dari context,
 - menjalankan move/turn state handling,
 - menentukan target wheel velocity,
-- memanggil motor control apply,
+- menjalankan PID speed control,
+- memanggil `MotorControlService::setMotorOutputs`,
 - completion detection,
 - fail-safe stop.
 
