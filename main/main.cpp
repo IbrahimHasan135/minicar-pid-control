@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <algorithm>
 
 #include "config/MotorHardwareConfig.hpp"
 #include "config/FreeRTOSConfig.hpp"
@@ -98,11 +99,17 @@ extern "C" void app_main(void)
 
             const float left_output = left_speed_pid.update(
                 target_speed_mps, motor_service.getLeftVelocityMps(),
-                config::rtos::CONTROL_PERIOD_S);
+                config::rtos::CONTROL_PERIOD_S) +
+                (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
             const float right_output = right_speed_pid.update(
                 target_speed_mps, motor_service.getRightVelocityMps(),
-                config::rtos::CONTROL_PERIOD_S);
-            motor_service.setMotorOutputs(left_output, right_output);
+                config::rtos::CONTROL_PERIOD_S) +
+                (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
+            const float clamped_left_output = std::clamp(
+                left_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+            const float clamped_right_output = std::clamp(
+                right_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+            motor_service.setMotorOutputs(clamped_left_output, clamped_right_output);
 
             if ((now - last_control_tick) >= pdMS_TO_TICKS(DRIVER_MONITOR_PERIOD_MS)) {
                 ESP_LOGI(
@@ -111,14 +118,14 @@ extern "C" void app_main(void)
                     static_cast<long>(motor_service.getLeftTicks()),
                     static_cast<double>(motor_service.getLeftRPM()),
                     static_cast<double>(motor_service.getLeftVelocityMps()),
-                    static_cast<double>(left_output));
+                    static_cast<double>(clamped_left_output));
                 ESP_LOGI(
                     TAG,
                     "right motor: ticks=%ld rpm=%.3f speed=%.3f m/s output=%.3f",
                     static_cast<long>(motor_service.getRightTicks()),
                     static_cast<double>(motor_service.getRightRPM()),
                     static_cast<double>(motor_service.getRightVelocityMps()),
-                    static_cast<double>(right_output));
+                    static_cast<double>(clamped_right_output));
                 last_control_tick = now;
             }
         } else {

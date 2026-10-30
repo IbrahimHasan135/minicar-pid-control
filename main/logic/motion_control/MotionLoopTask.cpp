@@ -238,10 +238,14 @@ void MotionLoopTask::failSafeStop()
 void MotionLoopTask::applySpeedControl(float dt_s)
 {
     const float left_output = left_speed_pid_.update(
-        left_target_mps_, motor_service_.getLeftVelocityMps(), dt_s);
+        left_target_mps_, motor_service_.getLeftVelocityMps(), dt_s) +
+        (config::pid::SPEED_FEED_FORWARD * left_target_mps_);
     const float right_output = right_speed_pid_.update(
-        right_target_mps_, motor_service_.getRightVelocityMps(), dt_s);
-    motor_service_.setMotorOutputs(left_output, right_output);
+        right_target_mps_, motor_service_.getRightVelocityMps(), dt_s) +
+        (config::pid::SPEED_FEED_FORWARD * right_target_mps_);
+    motor_service_.setMotorOutputs(
+        std::clamp(left_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT),
+        std::clamp(right_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT));
 }
 
 bool MotionLoopTask::servicesReady() const
