@@ -18,6 +18,7 @@ public:
     void setOutput(float output);
     int32_t getTicks() const;
     float getRPM() const;
+    float getSpeedMps() const;
     void stop();
 
 private:

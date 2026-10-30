@@ -41,6 +41,7 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
 // Quadrature x4 estimate: 11 pulses/motor revolution * gearbox ratio 34 * 4.
 // Calibrate this value by rotating the output shaft exactly one revolution.
 constexpr float ENCODER_COUNTS_PER_OUTPUT_REV = 1496.0f;
+constexpr float WHEEL_DIAMETER_M = 0.064f;
 
 constexpr ledc_mode_t PWM_SPEED_MODE = LEDC_LOW_SPEED_MODE;
 constexpr ledc_timer_t PWM_TIMER = LEDC_TIMER_0;

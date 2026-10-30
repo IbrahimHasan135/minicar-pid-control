@@ -97,6 +97,14 @@ float MotorEncoderDriver::getRPM() const
     return rpm_;
 }
 
+float MotorEncoderDriver::getSpeedMps() const
+{
+    constexpr float PI = 3.14159265358979323846f;
+    const float circumference_m =
+        config::motor_hardware::WHEEL_DIAMETER_M * PI;
+    return (getRPM() * circumference_m) / 60.0f;
+}
+
 void MotorEncoderDriver::stop()
 {
     output_ = 0.0f;

@@ -71,17 +71,19 @@ extern "C" void app_main(void)
         if (left_motor_ready) {
             ESP_LOGI(
                 TAG,
-                "left motor: ticks=%ld rpm=%.3f",
+                "left motor: ticks=%ld rpm=%.3f speed=%.3f m/s",
                 static_cast<long>(left_motor_driver.getTicks()),
-                static_cast<double>(left_motor_driver.getRPM()));
+                static_cast<double>(left_motor_driver.getRPM()),
+                static_cast<double>(left_motor_driver.getSpeedMps()));
         }
 
         if (right_motor_ready) {
             ESP_LOGI(
                 TAG,
-                "right motor: ticks=%ld rpm=%.3f",
+                "right motor: ticks=%ld rpm=%.3f speed=%.3f m/s",
                 static_cast<long>(right_motor_driver.getTicks()),
-                static_cast<double>(right_motor_driver.getRPM()));
+                static_cast<double>(right_motor_driver.getRPM()),
+                static_cast<double>(right_motor_driver.getSpeedMps()));
         }
 
         if (imu_ready) {
