@@ -27,7 +27,7 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
     LEDC_CHANNEL_0,
     LEDC_CHANNEL_1,
     false,
-    false,
+    true,
 };
 
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
