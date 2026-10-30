@@ -17,9 +17,20 @@ namespace {
 
 constexpr const char* TAG = "DriverDevelopment";
 constexpr uint32_t DRIVER_MONITOR_PERIOD_MS = 500;
-constexpr uint32_t MOTOR_TEST_STEP_MS = 2000;
 
-constexpr float MOTOR_TEST_TARGETS_MPS[] = {0.0f, 0.15f, 0.0f, -0.15f};
+struct MotorTestPhase {
+    float target_speed_mps;
+    uint32_t duration_ms;
+};
+
+constexpr MotorTestPhase MOTOR_TEST_PHASES[] = {
+    {0.20f, 2000},
+    {0.00f, 1000},
+    {0.40f, 2000},
+    {0.00f, 1000},
+    {0.58f, 2000},
+    {0.00f, 1000},
+};
 
 bool logInitResult(const char* driver_name, esp_err_t result)
 {
@@ -60,23 +71,26 @@ extern "C" void app_main(void)
     const bool motor_ready = logInitResult("motor service", motor_service.init());
     const bool imu_ready = logInitResult("IMU", imu_driver.init());
 
-    TickType_t last_motor_step = xTaskGetTickCount();
-    TickType_t last_control_tick = last_motor_step;
-    size_t motor_step = 0;
-    float target_speed_mps = 0.0f;
+    TickType_t last_phase_tick = xTaskGetTickCount();
+    TickType_t last_control_tick = last_phase_tick;
+    size_t phase_index = 0;
+    float target_speed_mps = MOTOR_TEST_PHASES[phase_index].target_speed_mps;
 
     while (true) {
         const TickType_t now = xTaskGetTickCount();
-        if ((now - last_motor_step) >= pdMS_TO_TICKS(MOTOR_TEST_STEP_MS)) {
-            motor_step = (motor_step + 1) %
-                         (sizeof(MOTOR_TEST_TARGETS_MPS) / sizeof(MOTOR_TEST_TARGETS_MPS[0]));
-            target_speed_mps = MOTOR_TEST_TARGETS_MPS[motor_step];
+        if ((now - last_phase_tick) >=
+            pdMS_TO_TICKS(MOTOR_TEST_PHASES[phase_index].duration_ms)) {
+            phase_index = (phase_index + 1) %
+                          (sizeof(MOTOR_TEST_PHASES) / sizeof(MOTOR_TEST_PHASES[0]));
+            target_speed_mps = MOTOR_TEST_PHASES[phase_index].target_speed_mps;
             left_speed_pid.reset();
             right_speed_pid.reset();
 
-            ESP_LOGI(TAG, "dual motor PID target=%.3f m/s",
-                     static_cast<double>(target_speed_mps));
-            last_motor_step = now;
+            ESP_LOGI(TAG, "PID test phase=%u target=%.3f m/s duration=%lu ms",
+                     static_cast<unsigned>(phase_index),
+                     static_cast<double>(target_speed_mps),
+                     static_cast<unsigned long>(MOTOR_TEST_PHASES[phase_index].duration_ms));
+            last_phase_tick = now;
         }
 
         if (motor_ready) {
