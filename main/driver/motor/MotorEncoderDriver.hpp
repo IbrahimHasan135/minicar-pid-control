@@ -12,7 +12,7 @@ class MotorEncoderDriver {
 public:
     explicit MotorEncoderDriver(
         const config::motor_hardware::MotorPeripheralConfig& config =
-            config::motor_hardware::DEFAULT_MOTOR);
+            config::motor_hardware::LEFT_MOTOR);
 
     esp_err_t init();
     void setOutput(float output);

@@ -20,11 +20,20 @@ struct MotorPeripheralConfig {
     bool invert_encoder;
 };
 
-// Mapping from commit 86b55e6. R_EN/L_EN are intentionally not managed by GPIO.
-constexpr MotorPeripheralConfig DEFAULT_MOTOR{
-    {GPIO_NUM_25, GPIO_NUM_26, GPIO_NUM_32, GPIO_NUM_33},
+// R_EN/L_EN are intentionally not managed by GPIO; connect both directly to 5 V.
+// Each config owns one BTS7960 and one motor.
+constexpr MotorPeripheralConfig LEFT_MOTOR{
+    {GPIO_NUM_22, GPIO_NUM_23, GPIO_NUM_16, GPIO_NUM_17},
     LEDC_CHANNEL_0,
     LEDC_CHANNEL_1,
+    false,
+    false,
+};
+
+constexpr MotorPeripheralConfig RIGHT_MOTOR{
+    {GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_32, GPIO_NUM_33},
+    LEDC_CHANNEL_2,
+    LEDC_CHANNEL_3,
     false,
     false,
 };
