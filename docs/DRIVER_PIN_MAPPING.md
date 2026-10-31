@@ -5,8 +5,17 @@ tidak dikontrol ESP32; keduanya dipasang langsung ke regulated 5 V.
 
 | Motor | RPWM | LPWM | Encoder A | Encoder B | R_EN/L_EN |
 |---|---:|---:|---:|---:|---|
-| Kiri / Motor 1 | GPIO22 | GPIO23 | GPIO16 | GPIO17 | 5 V langsung |
-| Kanan / Motor 2 | GPIO18 | GPIO19 | GPIO32 | GPIO33 | 5 V langsung |
+| Kiri / Motor 1 | GPIO23 | GPIO22 | GPIO19 | GPIO18 | 5 V langsung |
+| Kanan / Motor 2 | GPIO27 | GPIO26 | GPIO12 | GPIO13 | 5 V langsung |
+
+## IMU (reserved)
+
+IMU belum diimplementasikan, tetapi wiring yang disiapkan adalah:
+
+| Signal | ESP32 |
+|---|---:|
+| SDA | GPIO17 |
+| SCL | GPIO16 |
 
 Mapping PWM mengikuti `docs/Driver/BTS7960_Dual_Motor_Diagnostic.ino`.
 Encoder mengikuti `docs/Driver/sketch_oct29b.ino`.

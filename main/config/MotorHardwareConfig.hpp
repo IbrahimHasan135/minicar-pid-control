@@ -23,7 +23,7 @@ struct MotorPeripheralConfig {
 // R_EN/L_EN are intentionally not managed by GPIO; connect both directly to 5 V.
 // Each config owns one BTS7960 and one motor.
 constexpr MotorPeripheralConfig LEFT_MOTOR{
-    {GPIO_NUM_22, GPIO_NUM_23, GPIO_NUM_16, GPIO_NUM_17},
+    {GPIO_NUM_23, GPIO_NUM_22, GPIO_NUM_19, GPIO_NUM_18},
     LEDC_CHANNEL_0,
     LEDC_CHANNEL_1,
     false,
@@ -31,7 +31,7 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
 };
 
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
-    {GPIO_NUM_18, GPIO_NUM_19, GPIO_NUM_32, GPIO_NUM_33},
+    {GPIO_NUM_27, GPIO_NUM_26, GPIO_NUM_12, GPIO_NUM_13},
     LEDC_CHANNEL_2,
     LEDC_CHANNEL_3,
     false,
