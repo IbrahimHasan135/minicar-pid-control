@@ -12,6 +12,12 @@ bool Mission::enqueueDemoMission(QueueHandle_t motion_queue)
            pushStop(motion_queue);
 }
 
+bool Mission::pushEncoderDemoMission(QueueHandle_t motion_queue)
+{
+    return pushMove(motion_queue, 1.0f, 0.2f) &&
+           pushStop(motion_queue);
+}
+
 bool Mission::pushMove(QueueHandle_t motion_queue, float distance_m, float speed_mps)
 {
     const model::MotionCommand command{model::MotionType::MOVE_DISTANCE, distance_m, speed_mps};

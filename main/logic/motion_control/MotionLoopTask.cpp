@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 
 #include "config/FreeRTOSConfig.hpp"
 #include "config/PIDConfig.hpp"
@@ -13,11 +15,13 @@ MotionLoopTask::MotionLoopTask(
     MotionControlContext& context,
     service::MotorControlService& motor_service,
     service::HeadingService& heading_service,
-    service::OdometryService& odometry_service)
+    service::OdometryService& odometry_service,
+    QueueHandle_t telemetry_queue)
     : context_(context),
       motor_service_(motor_service),
       heading_service_(heading_service),
       odometry_service_(odometry_service),
+      telemetry_queue_(telemetry_queue),
       left_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
       right_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD)
 {
@@ -46,6 +50,7 @@ void MotionLoopTask::taskEntry(void* task_context)
 void MotionLoopTask::run()
 {
     TickType_t last_wake_tick = xTaskGetTickCount();
+    last_telemetry_tick_ = last_wake_tick;
 
     while (true) {
         step(config::rtos::CONTROL_PERIOD_S);
@@ -76,6 +81,7 @@ void MotionLoopTask::step(float dt_s)
     startPendingCommand();
     handleSnapshot(context_.snapshot(), dt_s);
     applySpeedControl(dt_s);
+    publishTelemetry();
 }
 
 void MotionLoopTask::updateServices(float dt_s)
@@ -117,6 +123,11 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
 
     left_speed_pid_.reset();
     right_speed_pid_.reset();
+    filtered_left_speed_mps_ = 0.0f;
+    filtered_right_speed_mps_ = 0.0f;
+    previous_left_output_ = 0.0f;
+    previous_right_output_ = 0.0f;
+    feedback_filter_initialized_ = false;
     heading_service_.resetController();
 
     const float speed_mps = std::clamp(
@@ -134,6 +145,11 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
 void MotionLoopTask::startTurn(const model::MotionCommand& command)
 {
     if (!isValidTurn(command)) {
+        failSafeStop();
+        return;
+    }
+
+    if (!heading_service_.isInitialized()) {
         failSafeStop();
         return;
     }
@@ -224,6 +240,13 @@ void MotionLoopTask::stopAndIdle()
     left_target_mps_ = 0.0f;
     right_target_mps_ = 0.0f;
     motor_service_.stopMotor();
+    left_speed_pid_.reset();
+    right_speed_pid_.reset();
+    filtered_left_speed_mps_ = 0.0f;
+    filtered_right_speed_mps_ = 0.0f;
+    previous_left_output_ = 0.0f;
+    previous_right_output_ = 0.0f;
+    feedback_filter_initialized_ = false;
     context_.setIdle();
 }
 
@@ -232,25 +255,96 @@ void MotionLoopTask::failSafeStop()
     left_target_mps_ = 0.0f;
     right_target_mps_ = 0.0f;
     motor_service_.stopMotor();
+    left_speed_pid_.reset();
+    right_speed_pid_.reset();
+    previous_left_output_ = 0.0f;
+    previous_right_output_ = 0.0f;
     context_.setError();
 }
 
 void MotionLoopTask::applySpeedControl(float dt_s)
 {
+    if (std::fabs(left_target_mps_) <= 0.001f && std::fabs(right_target_mps_) <= 0.001f) {
+        left_speed_pid_.reset();
+        right_speed_pid_.reset();
+        previous_left_output_ = 0.0f;
+        previous_right_output_ = 0.0f;
+        motor_service_.stopMotor();
+        return;
+    }
+
+    const float left_speed_mps = motor_service_.getLeftVelocityMps();
+    const float right_speed_mps = motor_service_.getRightVelocityMps();
+    if (!feedback_filter_initialized_) {
+        filtered_left_speed_mps_ = left_speed_mps;
+        filtered_right_speed_mps_ = right_speed_mps;
+        feedback_filter_initialized_ = true;
+    } else {
+        constexpr float alpha = config::pid::SPEED_FEEDBACK_FILTER_ALPHA;
+        filtered_left_speed_mps_ += alpha * (left_speed_mps - filtered_left_speed_mps_);
+        filtered_right_speed_mps_ += alpha * (right_speed_mps - filtered_right_speed_mps_);
+    }
+
+    float left_pid_target_mps = left_target_mps_;
+    float right_pid_target_mps = right_target_mps_;
+    if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
+        right_pid_target_mps = filtered_left_speed_mps_;
+    } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
+        left_pid_target_mps = filtered_right_speed_mps_;
+    }
+
     const float left_output = left_speed_pid_.update(
-        left_target_mps_, motor_service_.getLeftVelocityMps(), dt_s) +
-        (config::pid::SPEED_FEED_FORWARD * left_target_mps_);
+        left_pid_target_mps, filtered_left_speed_mps_, dt_s) +
+        (config::pid::SPEED_FEED_FORWARD * left_pid_target_mps);
     const float right_output = right_speed_pid_.update(
-        right_target_mps_, motor_service_.getRightVelocityMps(), dt_s) +
-        (config::pid::SPEED_FEED_FORWARD * right_target_mps_);
+        right_pid_target_mps, filtered_right_speed_mps_, dt_s) +
+        (config::pid::SPEED_FEED_FORWARD * right_pid_target_mps);
+    const float max_output_step = config::pid::SPEED_OUTPUT_SLEW_RATE * dt_s;
+    const float left_slewed = std::clamp(
+        left_output, previous_left_output_ - max_output_step,
+        previous_left_output_ + max_output_step);
+    const float right_slewed = std::clamp(
+        right_output, previous_right_output_ - max_output_step,
+        previous_right_output_ + max_output_step);
+    const float clamped_left_output = std::clamp(
+        left_slewed, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+    const float clamped_right_output = std::clamp(
+        right_slewed, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+    previous_left_output_ = clamped_left_output;
+    previous_right_output_ = clamped_right_output;
     motor_service_.setMotorOutputs(
-        std::clamp(left_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT),
-        std::clamp(right_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT));
+        clamped_left_output, clamped_right_output);
+}
+
+void MotionLoopTask::publishTelemetry()
+{
+    if (telemetry_queue_ == nullptr ||
+        (xTaskGetTickCount() - last_telemetry_tick_) < pdMS_TO_TICKS(500)) {
+        return;
+    }
+
+    const MotionControlSnapshot snapshot = context_.snapshot();
+    model::TelemetryMessage message{};
+    message.timestamp_ms = static_cast<uint32_t>(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    message.level = model::LogLevel::INFO;
+    std::snprintf(message.tag, sizeof(message.tag), "%s", "motion");
+    std::snprintf(
+        message.message, sizeof(message.message),
+        "state=%u target=%.3f left=%.3f right=%.3f out=%.3f/%.3f dist=%.3f",
+        static_cast<unsigned>(snapshot.state),
+        static_cast<double>(snapshot.target_speed_mps),
+        static_cast<double>(motor_service_.getLeftVelocityMps()),
+        static_cast<double>(motor_service_.getRightVelocityMps()),
+        static_cast<double>(previous_left_output_),
+        static_cast<double>(previous_right_output_),
+        static_cast<double>(odometry_service_.getTravelledDistanceM()));
+    (void)xQueueSend(telemetry_queue_, &message, 0);
+    last_telemetry_tick_ = xTaskGetTickCount();
 }
 
 bool MotionLoopTask::servicesReady() const
 {
-    return motor_service_.isInitialized() && heading_service_.isInitialized();
+    return motor_service_.isInitialized();
 }
 
 bool MotionLoopTask::isValidMove(const model::MotionCommand& command) const

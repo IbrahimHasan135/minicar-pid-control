@@ -1,6 +1,6 @@
 idf_component_register(
     SRCS
-        "main.cpp"
+        "app_main.cpp"
         "application/Mission.cpp"
         "driver/communication/SerialDriver.cpp"
         "driver/imu/IMUDriver.cpp"
