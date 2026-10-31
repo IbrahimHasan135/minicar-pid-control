@@ -43,7 +43,9 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
 constexpr float ENCODER_COUNTS_PER_OUTPUT_REV = 1496.0f;
 constexpr float WHEEL_DIAMETER_M = 0.064f;
 
-constexpr ledc_mode_t PWM_SPEED_MODE = LEDC_LOW_SPEED_MODE;
+// ESP32 low-speed LEDC can remain stuck waiting for duty_start to clear.
+// Use high-speed mode so channel updates complete without that watchdog hang.
+constexpr ledc_mode_t PWM_SPEED_MODE = LEDC_HIGH_SPEED_MODE;
 constexpr ledc_timer_t PWM_TIMER = LEDC_TIMER_0;
 constexpr ledc_timer_bit_t PWM_DUTY_RESOLUTION = LEDC_TIMER_10_BIT;
 constexpr unsigned int PWM_FREQUENCY_HZ = 20000;
