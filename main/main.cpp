@@ -62,11 +62,21 @@ extern "C" void app_main(void)
         config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD);
     static service::PIDController right_speed_pid(
         config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD);
+    static service::PIDController speed_sync_pid(
+        config::pid::SPEED_SYNC_KP,
+        config::pid::SPEED_SYNC_KI,
+        config::pid::SPEED_SYNC_KD);
 
     left_speed_pid.setOutputLimit(config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
     right_speed_pid.setOutputLimit(config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
     left_speed_pid.setIntegralLimit(-config::pid::SPEED_INTEGRAL_LIMIT, config::pid::SPEED_INTEGRAL_LIMIT);
     right_speed_pid.setIntegralLimit(-config::pid::SPEED_INTEGRAL_LIMIT, config::pid::SPEED_INTEGRAL_LIMIT);
+    speed_sync_pid.setOutputLimit(
+        -config::pid::SPEED_SYNC_OUTPUT_LIMIT,
+        config::pid::SPEED_SYNC_OUTPUT_LIMIT);
+    speed_sync_pid.setIntegralLimit(
+        -config::pid::SPEED_SYNC_INTEGRAL_LIMIT,
+        config::pid::SPEED_SYNC_INTEGRAL_LIMIT);
 
     ESP_LOGI(TAG, "starting motor and IMU driver development mode");
 
@@ -77,6 +87,11 @@ extern "C" void app_main(void)
     TickType_t last_control_tick = last_phase_tick;
     size_t phase_index = 0;
     float target_speed_mps = MOTOR_TEST_PHASES[phase_index].target_speed_mps;
+    float filtered_left_speed_mps = 0.0f;
+    float filtered_right_speed_mps = 0.0f;
+    float previous_left_output = 0.0f;
+    float previous_right_output = 0.0f;
+    bool feedback_filter_initialized = false;
 
     while (true) {
         const TickType_t now = xTaskGetTickCount();
@@ -87,6 +102,12 @@ extern "C" void app_main(void)
             target_speed_mps = MOTOR_TEST_PHASES[phase_index].target_speed_mps;
             left_speed_pid.reset();
             right_speed_pid.reset();
+            speed_sync_pid.reset();
+            filtered_left_speed_mps = 0.0f;
+            filtered_right_speed_mps = 0.0f;
+            previous_left_output = 0.0f;
+            previous_right_output = 0.0f;
+            feedback_filter_initialized = false;
 
             ESP_LOGI(TAG, "PID test phase=%u target=%.3f m/s duration=%lu ms",
                      static_cast<unsigned>(phase_index),
@@ -105,20 +126,54 @@ extern "C" void app_main(void)
                 // when the encoder reports residual motion with alternating signs.
                 left_speed_pid.reset();
                 right_speed_pid.reset();
+                speed_sync_pid.reset();
+                filtered_left_speed_mps = 0.0f;
+                filtered_right_speed_mps = 0.0f;
+                feedback_filter_initialized = false;
+                previous_left_output = 0.0f;
+                previous_right_output = 0.0f;
                 motor_service.stopMotor();
             } else {
+                const float left_speed_mps = motor_service.getLeftVelocityMps();
+                const float right_speed_mps = motor_service.getRightVelocityMps();
+                if (!feedback_filter_initialized) {
+                    filtered_left_speed_mps = left_speed_mps;
+                    filtered_right_speed_mps = right_speed_mps;
+                    feedback_filter_initialized = true;
+                } else {
+                    constexpr float alpha = config::pid::SPEED_FEEDBACK_FILTER_ALPHA;
+                    filtered_left_speed_mps += alpha * (left_speed_mps - filtered_left_speed_mps);
+                    filtered_right_speed_mps += alpha * (right_speed_mps - filtered_right_speed_mps);
+                }
+
+                // A negative correction means the right wheel is slower: reduce
+                // left output and add the same amount to the right output.
+                const float sync_correction = speed_sync_pid.update(
+                    0.0f,
+                    filtered_left_speed_mps - filtered_right_speed_mps,
+                    config::rtos::CONTROL_PERIOD_S);
                 const float left_output = left_speed_pid.update(
-                    target_speed_mps, motor_service.getLeftVelocityMps(),
+                    target_speed_mps, filtered_left_speed_mps,
                     config::rtos::CONTROL_PERIOD_S) +
-                    (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
+                    (config::pid::SPEED_FEED_FORWARD * target_speed_mps) +
+                    sync_correction;
                 const float right_output = right_speed_pid.update(
-                    target_speed_mps, motor_service.getRightVelocityMps(),
+                    target_speed_mps, filtered_right_speed_mps,
                     config::rtos::CONTROL_PERIOD_S) +
-                    (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
+                    (config::pid::SPEED_FEED_FORWARD * target_speed_mps) -
+                    sync_correction;
+                const float max_output_step =
+                    config::pid::SPEED_OUTPUT_SLEW_RATE * config::rtos::CONTROL_PERIOD_S;
                 clamped_left_output = std::clamp(
-                    left_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+                    std::clamp(left_output, previous_left_output - max_output_step,
+                               previous_left_output + max_output_step),
+                    config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
                 clamped_right_output = std::clamp(
-                    right_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+                    std::clamp(right_output, previous_right_output - max_output_step,
+                               previous_right_output + max_output_step),
+                    config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+                previous_left_output = clamped_left_output;
+                previous_right_output = clamped_right_output;
                 motor_service.setMotorOutputs(clamped_left_output, clamped_right_output);
             }
 
