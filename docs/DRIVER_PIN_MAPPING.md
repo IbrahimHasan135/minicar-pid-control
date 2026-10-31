@@ -6,7 +6,7 @@ tidak dikontrol ESP32; keduanya dipasang langsung ke regulated 5 V.
 | Motor | RPWM | LPWM | Encoder A | Encoder B | R_EN/L_EN |
 |---|---:|---:|---:|---:|---|
 | Kiri / Motor 1 | GPIO23 | GPIO22 | GPIO19 | GPIO18 | 5 V langsung |
-| Kanan / Motor 2 | GPIO27 | GPIO26 | GPIO12 | GPIO13 | 5 V langsung |
+| Kanan / Motor 2 | GPIO26 | GPIO25 | GPIO12 | GPIO13 | 5 V langsung |
 
 ## IMU (reserved)
 

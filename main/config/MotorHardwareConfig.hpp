@@ -31,7 +31,7 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
 };
 
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
-    {GPIO_NUM_27, GPIO_NUM_26, GPIO_NUM_12, GPIO_NUM_13},
+    {GPIO_NUM_26, GPIO_NUM_25, GPIO_NUM_12, GPIO_NUM_13},
     LEDC_CHANNEL_2,
     LEDC_CHANNEL_3,
     false,
