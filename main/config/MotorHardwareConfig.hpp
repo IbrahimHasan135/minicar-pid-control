@@ -34,8 +34,8 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
     {GPIO_NUM_26, GPIO_NUM_25, GPIO_NUM_12, GPIO_NUM_13},
     LEDC_CHANNEL_2,
     LEDC_CHANNEL_3,
-    false,
-    false,
+    true,
+    true,
 };
 
 // Quadrature x4 estimate: 11 pulses/motor revolution * gearbox ratio 34 * 4.
