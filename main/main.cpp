@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <algorithm>
+#include <cmath>
 
 #include "config/MotorHardwareConfig.hpp"
 #include "config/FreeRTOSConfig.hpp"
@@ -25,12 +26,12 @@ struct MotorTestPhase {
 };
 
 constexpr MotorTestPhase MOTOR_TEST_PHASES[] = {
-    {0.20f, 2000},
-    {0.00f, 1000},
-    {0.40f, 2000},
-    {0.00f, 1000},
-    {0.58f, 2000},
-    {0.00f, 1000},
+    {0.20f, 15000},
+    {0.00f, 5000},
+    {0.40f, 15000},
+    {0.00f, 5000},
+    {0.58f, 15000},
+    {0.00f, 5000},
 };
 
 bool logInitResult(const char* driver_name, esp_err_t result)
@@ -97,19 +98,29 @@ extern "C" void app_main(void)
         if (motor_ready) {
             motor_service.refreshFeedback();
 
-            const float left_output = left_speed_pid.update(
-                target_speed_mps, motor_service.getLeftVelocityMps(),
-                config::rtos::CONTROL_PERIOD_S) +
-                (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
-            const float right_output = right_speed_pid.update(
-                target_speed_mps, motor_service.getRightVelocityMps(),
-                config::rtos::CONTROL_PERIOD_S) +
-                (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
-            const float clamped_left_output = std::clamp(
-                left_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
-            const float clamped_right_output = std::clamp(
-                right_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
-            motor_service.setMotorOutputs(clamped_left_output, clamped_right_output);
+            float clamped_left_output = 0.0f;
+            float clamped_right_output = 0.0f;
+            if (std::fabs(target_speed_mps) <= 0.001f) {
+                // Do not use reverse PID braking at zero target; it causes oscillation
+                // when the encoder reports residual motion with alternating signs.
+                left_speed_pid.reset();
+                right_speed_pid.reset();
+                motor_service.stopMotor();
+            } else {
+                const float left_output = left_speed_pid.update(
+                    target_speed_mps, motor_service.getLeftVelocityMps(),
+                    config::rtos::CONTROL_PERIOD_S) +
+                    (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
+                const float right_output = right_speed_pid.update(
+                    target_speed_mps, motor_service.getRightVelocityMps(),
+                    config::rtos::CONTROL_PERIOD_S) +
+                    (config::pid::SPEED_FEED_FORWARD * target_speed_mps);
+                clamped_left_output = std::clamp(
+                    left_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+                clamped_right_output = std::clamp(
+                    right_output, config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
+                motor_service.setMotorOutputs(clamped_left_output, clamped_right_output);
+            }
 
             if ((now - last_control_tick) >= pdMS_TO_TICKS(DRIVER_MONITOR_PERIOD_MS)) {
                 ESP_LOGI(

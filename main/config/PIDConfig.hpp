@@ -2,8 +2,8 @@
 
 namespace minicar::config::pid {
 
-constexpr float SPEED_KP = 3.0f;
-constexpr float SPEED_KI = 1.4f;
+constexpr float SPEED_KP = 2.7f;
+constexpr float SPEED_KI = 1.3f;
 constexpr float SPEED_KD = 0.0f;
 constexpr float SPEED_FEED_FORWARD = 1.55f;
 
