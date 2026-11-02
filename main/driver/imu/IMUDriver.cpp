@@ -9,8 +9,8 @@ namespace minicar::driver {
 
 namespace {
 
-constexpr gpio_num_t I2C_SDA_PIN = GPIO_NUM_21;
-constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_22;
+constexpr gpio_num_t I2C_SDA_PIN = GPIO_NUM_17;
+constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_16;
 constexpr uint32_t I2C_FREQUENCY_HZ = 100000;
 constexpr int I2C_TIMEOUT_MS = 100;
 

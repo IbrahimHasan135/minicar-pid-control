@@ -20,7 +20,7 @@ extern "C" void app_main(void)
 {
     static minicar::driver::IMUDriver imu;
 
-    ESP_LOGI(TAG, "GY-511/LSM303DLHC bench: SDA=GPIO21 SCL=GPIO22");
+    ESP_LOGI(TAG, "GY-511/LSM303DLHC bench: SDA=GPIO17 SCL=GPIO16");
     ESP_LOGI(TAG, "Expected I2C addresses: accelerometer=0x19 magnetometer=0x1E");
 
     const esp_err_t init_result = imu.init();
