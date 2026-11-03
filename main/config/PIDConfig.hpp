@@ -22,15 +22,6 @@ constexpr float HEADING_KP = 0.02f;
 constexpr float HEADING_KI = 0.0f;
 constexpr float HEADING_KD = 0.001f;
 
-// Turn controller uses IMU heading only. Its output is a normalized motor
-// command, not a wheel-speed target, so the wheel speed PID is bypassed while
-// turning. Keep I disabled to avoid carrying the integral through an overshoot.
-constexpr float TURN_HEADING_KP = 0.008f;
-constexpr float TURN_HEADING_KI = 0.0f;
-constexpr float TURN_HEADING_KD = 0.0002f;
-constexpr float TURN_OUTPUT_MIN = 0.07f;
-constexpr float TURN_OUTPUT_MAX = 0.45f;
-
 constexpr float SPEED_INTEGRAL_LIMIT = 0.6f;
 constexpr float HEADING_INTEGRAL_LIMIT = 20.0f;
 

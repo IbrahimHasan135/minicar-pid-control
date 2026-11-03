@@ -55,7 +55,6 @@ private:
     QueueHandle_t telemetry_queue_{nullptr};
     service::PIDController left_speed_pid_;
     service::PIDController right_speed_pid_;
-    service::PIDController turn_heading_pid_;
     float left_target_mps_{0.0f};
     float right_target_mps_{0.0f};
     float filtered_left_speed_mps_{0.0f};
@@ -65,6 +64,7 @@ private:
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
     TickType_t wait_until_tick_{0};
+    float turn_direction_{1.0f};
 };
 
 }  // namespace minicar::logic::motion_control

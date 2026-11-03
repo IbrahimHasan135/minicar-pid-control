@@ -23,19 +23,12 @@ MotionLoopTask::MotionLoopTask(
       odometry_service_(odometry_service),
       telemetry_queue_(telemetry_queue),
       left_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
-      right_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
-      turn_heading_pid_(config::pid::TURN_HEADING_KP,
-                        config::pid::TURN_HEADING_KI,
-                        config::pid::TURN_HEADING_KD)
+      right_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD)
 {
     left_speed_pid_.setOutputLimit(config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
     right_speed_pid_.setOutputLimit(config::robot::MIN_MOTOR_OUTPUT, config::robot::MAX_MOTOR_OUTPUT);
     left_speed_pid_.setIntegralLimit(-config::pid::SPEED_INTEGRAL_LIMIT, config::pid::SPEED_INTEGRAL_LIMIT);
     right_speed_pid_.setIntegralLimit(-config::pid::SPEED_INTEGRAL_LIMIT, config::pid::SPEED_INTEGRAL_LIMIT);
-    turn_heading_pid_.setOutputLimit(
-        -config::pid::TURN_OUTPUT_MAX,
-        config::pid::TURN_OUTPUT_MAX);
-    turn_heading_pid_.setIntegralLimit(-1.0f, 1.0f);
 }
 
 BaseType_t MotionLoopTask::start()
@@ -133,7 +126,6 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
 
     left_speed_pid_.reset();
     right_speed_pid_.reset();
-    turn_heading_pid_.reset();
     filtered_left_speed_mps_ = 0.0f;
     filtered_right_speed_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
@@ -167,8 +159,8 @@ void MotionLoopTask::startTurn(const model::MotionCommand& command)
 
     left_speed_pid_.reset();
     right_speed_pid_.reset();
-    turn_heading_pid_.reset();
     heading_service_.resetController();
+    turn_direction_ = (command.value >= 0.0f) ? 1.0f : -1.0f;
 
     const float target_heading_deg = service::HeadingService::normalizeAngleDeg(
         heading_service_.getHeadingDeg() + command.value);
@@ -188,7 +180,6 @@ void MotionLoopTask::startWait(const model::MotionCommand& command)
     motor_service_.stopMotor();
     left_speed_pid_.reset();
     right_speed_pid_.reset();
-    turn_heading_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     wait_until_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(
@@ -263,36 +254,24 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         snapshot.target_heading_deg,
         heading_service_.getHeadingDeg());
 
-    // Keep correcting until both the heading error and rotation rate are small.
-    // This intentionally does not stop at the first target crossing: a sign
-    // change in angle_error_deg makes the IMU turn controller reverse the
-    // motors and trim the overshoot.
-    if (std::fabs(angle_error_deg) <= config::robot::TURN_ANGLE_TOLERANCE_DEG &&
-        std::fabs(heading_service_.getYawRateDps()) <= config::robot::TURN_YAW_RATE_TOLERANCE_DPS) {
+    // Stop when the measured heading reaches or crosses the target. Do not
+    // reverse to correct overshoot during this open-loop turn test.
+    if ((turn_direction_ * angle_error_deg) <= 0.0f) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
-        turn_heading_pid_.reset();
         context_.setCompleted();
         return;
     }
 
-    // IMU-only turn control. The output sign follows the heading error, so an
-    // overshoot automatically commands the opposite rotation. There is no
-    // wheel-speed PID in this path.
-    float turn_output = turn_heading_pid_.update(angle_error_deg, 0.0f, dt_s);
-    if (std::fabs(angle_error_deg) > config::robot::TURN_ANGLE_TOLERANCE_DEG &&
-        std::fabs(turn_output) < config::pid::TURN_OUTPUT_MIN) {
-        turn_output = std::copysign(config::pid::TURN_OUTPUT_MIN, angle_error_deg);
-    }
-
-    const float left_output = std::clamp(
-        turn_output,
-        config::robot::MIN_MOTOR_OUTPUT,
-        config::robot::MAX_MOTOR_OUTPUT);
+    // Deliberately bypass both heading PID and wheel-speed PID for this bench
+    // test. Run both motors at a fixed, opposite PWM until the IMU crosses the
+    // requested heading.
+    (void)dt_s;
+    const float left_output = turn_direction_ * config::robot::OPEN_LOOP_TURN_OUTPUT;
     const float right_output = -left_output;
-    left_target_mps_ = left_output;
-    right_target_mps_ = right_output;
+    left_target_mps_ = turn_direction_;
+    right_target_mps_ = -turn_direction_;
     previous_left_output_ = left_output;
     previous_right_output_ = right_output;
     motor_service_.setMotorOutputs(left_output, right_output);
@@ -305,7 +284,6 @@ void MotionLoopTask::stopAndIdle()
     motor_service_.stopMotor();
     left_speed_pid_.reset();
     right_speed_pid_.reset();
-    turn_heading_pid_.reset();
     filtered_left_speed_mps_ = 0.0f;
     filtered_right_speed_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
@@ -321,7 +299,6 @@ void MotionLoopTask::failSafeStop()
     motor_service_.stopMotor();
     left_speed_pid_.reset();
     right_speed_pid_.reset();
-    turn_heading_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     context_.setError();
