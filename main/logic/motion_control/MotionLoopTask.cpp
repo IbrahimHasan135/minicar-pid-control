@@ -262,9 +262,13 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         return;
     }
 
-    const float turn_wheel_speed_mps = heading_service_.calculateHeadingCorrection(
-        snapshot.target_heading_deg,
-        dt_s);
+    // Deliberately bypass heading PID for this bench test. Keep wheel-speed
+    // PID active, but choose the turn direction from the sign of the angle
+    // error and use a conservative fixed wheel speed.
+    (void)dt_s;
+    const float turn_direction = (angle_error_deg >= 0.0f) ? 1.0f : -1.0f;
+    const float turn_wheel_speed_mps =
+        turn_direction * config::robot::OPEN_LOOP_TURN_WHEEL_SPEED_MPS;
 
     left_target_mps_ = turn_wheel_speed_mps;
     right_target_mps_ = -turn_wheel_speed_mps;
