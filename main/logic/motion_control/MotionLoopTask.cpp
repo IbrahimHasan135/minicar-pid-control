@@ -138,6 +138,10 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
         0.0f,
         config::robot::MAX_LINEAR_SPEED_MPS);
 
+    const float duration_s = std::fabs(command.value) / speed_mps;
+    const auto duration_ms = static_cast<uint32_t>(std::ceil(duration_s * 1000.0f));
+    move_until_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(std::max<uint32_t>(1U, duration_ms));
+
     context_.beginMove(
         command.value,
         speed_mps,
@@ -225,6 +229,14 @@ void MotionLoopTask::handleWait(const MotionControlSnapshot& snapshot)
 
 void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_s)
 {
+    if (static_cast<int32_t>(xTaskGetTickCount() - move_until_tick_) >= 0) {
+        left_target_mps_ = 0.0f;
+        right_target_mps_ = 0.0f;
+        motor_service_.stopMotor();
+        context_.setCompleted();
+        return;
+    }
+
     const float travelled_m = odometry_service_.getTravelledDistanceM() - snapshot.start_distance_m;
     const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
     const float travelled_in_command_direction_m = direction * travelled_m;
