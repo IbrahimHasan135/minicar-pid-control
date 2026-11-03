@@ -322,10 +322,14 @@ void MotionLoopTask::applySpeedControl(float dt_s)
 
     float left_pid_target_mps = left_target_mps_;
     float right_pid_target_mps = right_target_mps_;
-    if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
-        right_pid_target_mps = filtered_left_speed_mps_;
-    } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
-        left_pid_target_mps = filtered_right_speed_mps_;
+    // Master/follower synchronization is only for straight-line motion.
+    // During a turn, the two wheel targets must keep opposite signs.
+    if (context_.snapshot().state == model::MotionState::MOVING) {
+        if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
+            right_pid_target_mps = filtered_left_speed_mps_;
+        } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
+            left_pid_target_mps = filtered_right_speed_mps_;
+        }
     }
 
     const float left_output = left_speed_pid_.update(
