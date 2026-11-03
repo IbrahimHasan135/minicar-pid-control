@@ -10,6 +10,7 @@ public:
     static bool enqueueDemoMission(QueueHandle_t motion_queue);
     static bool pushEncoderDemoMission(QueueHandle_t motion_queue);
     static bool enqueueTurnTestMission(QueueHandle_t motion_queue);
+    static bool enqueueSquareMission(QueueHandle_t motion_queue);
 
 private:
     static bool pushMove(QueueHandle_t motion_queue, float distance_m, float speed_mps);

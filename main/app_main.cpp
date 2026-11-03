@@ -90,5 +90,5 @@ extern "C" void app_main(void)
     // SerialTask is intentionally disabled until SerialDriver is implemented.
 
     publishStartupTelemetry(telemetry_queue, "mini car tasks started");
-    (void)application::Mission::enqueueTurnTestMission(motion_queue);
+    (void)application::Mission::enqueueSquareMission(motion_queue);
 }

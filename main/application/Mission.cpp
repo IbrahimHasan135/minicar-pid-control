@@ -33,6 +33,23 @@ bool Mission::enqueueTurnTestMission(QueueHandle_t motion_queue)
            pushStop(motion_queue);
 }
 
+bool Mission::enqueueSquareMission(QueueHandle_t motion_queue)
+{
+    constexpr float SIDE_DISTANCE_M = 1.0f;
+    constexpr float FORWARD_SPEED_MPS = 0.4f;
+    constexpr float RIGHT_TURN_DEG = 90.0f;
+
+    return pushMove(motion_queue, SIDE_DISTANCE_M, FORWARD_SPEED_MPS) &&
+           pushTurn(motion_queue, RIGHT_TURN_DEG) &&
+           pushMove(motion_queue, SIDE_DISTANCE_M, FORWARD_SPEED_MPS) &&
+           pushTurn(motion_queue, RIGHT_TURN_DEG) &&
+           pushMove(motion_queue, SIDE_DISTANCE_M, FORWARD_SPEED_MPS) &&
+           pushTurn(motion_queue, RIGHT_TURN_DEG) &&
+           pushMove(motion_queue, SIDE_DISTANCE_M, FORWARD_SPEED_MPS) &&
+           pushTurn(motion_queue, RIGHT_TURN_DEG) &&
+           pushStop(motion_queue);
+}
+
 bool Mission::pushMove(QueueHandle_t motion_queue, float distance_m, float speed_mps)
 {
     const model::MotionCommand command{model::MotionType::MOVE_DISTANCE, distance_m, speed_mps};
