@@ -226,11 +226,13 @@ void MotionLoopTask::handleWait(const MotionControlSnapshot& snapshot)
 void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_s)
 {
     const float travelled_m = odometry_service_.getTravelledDistanceM() - snapshot.start_distance_m;
-    const float distance_error_m = snapshot.target_distance_m - travelled_m;
-    const float abs_distance_error_m = std::fabs(distance_error_m);
+    const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
+    const float travelled_in_command_direction_m = direction * travelled_m;
+    const float target_distance_m = std::fabs(snapshot.target_distance_m);
 
-    if (abs_distance_error_m <= config::robot::MOVE_DISTANCE_TOLERANCE_M &&
-        motor_service_.getAverageSpeedMps() <= config::robot::MOVE_COMPLETE_SPEED_TOLERANCE_MPS) {
+    // This is a one-way distance command: once the encoder distance reaches
+    // the target, stop immediately. Never reverse because of overshoot.
+    if (travelled_in_command_direction_m >= target_distance_m) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
@@ -238,14 +240,12 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
         return;
     }
 
-    const float direction = (distance_error_m >= 0.0f) ? 1.0f : -1.0f;
     const float base_speed_mps = direction * snapshot.target_speed_mps;
-    const float heading_correction_mps = heading_service_.calculateHeadingCorrection(
-        snapshot.target_heading_deg,
-        dt_s);
-
-    left_target_mps_ = base_speed_mps - heading_correction_mps;
-    right_target_mps_ = base_speed_mps + heading_correction_mps;
+    // Do not use IMU heading correction during straight movement for this
+    // test. The speed controller below keeps both wheel velocities matched.
+    left_target_mps_ = base_speed_mps;
+    right_target_mps_ = base_speed_mps;
+    (void)dt_s;
 }
 
 void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_s)
