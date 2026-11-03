@@ -35,7 +35,7 @@ bool Mission::enqueueTurnTestMission(QueueHandle_t motion_queue)
 
 bool Mission::enqueueSquareMission(QueueHandle_t motion_queue)
 {
-    constexpr float SIDE_DISTANCE_M = 2.0f;
+    constexpr float SIDE_DISTANCE_M = 1.0f;
     constexpr float FORWARD_SPEED_MPS = 0.4f;
     constexpr float RIGHT_TURN_DEG = 90.0f;
 
