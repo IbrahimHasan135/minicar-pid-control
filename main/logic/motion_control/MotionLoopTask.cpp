@@ -365,9 +365,11 @@ void MotionLoopTask::publishTelemetry()
     std::snprintf(message.tag, sizeof(message.tag), "%s", "motion");
     std::snprintf(
         message.message, sizeof(message.message),
-        "state=%u target=%.3f left=%.3f right=%.3f out=%.3f/%.3f dist=%.3f",
+        "s=%u h=%.1f th=%.1f y=%.1f v=%.2f/%.2f o=%.2f/%.2f d=%.2f",
         static_cast<unsigned>(snapshot.state),
-        static_cast<double>(snapshot.target_speed_mps),
+        static_cast<double>(heading_service_.getHeadingDeg()),
+        static_cast<double>(snapshot.target_heading_deg),
+        static_cast<double>(heading_service_.getYawRateDps()),
         static_cast<double>(motor_service_.getLeftVelocityMps()),
         static_cast<double>(motor_service_.getRightVelocityMps()),
         static_cast<double>(previous_left_output_),
