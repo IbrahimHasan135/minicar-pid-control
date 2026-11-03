@@ -29,6 +29,7 @@ public:
 
     void beginMove(float distance_m, float speed_mps, float start_distance_m, float target_heading_deg);
     void beginTurn(float angle_deg, float target_heading_deg);
+    void beginWait(float duration_s);
     void setCompleted();
     void setIdle();
     void setError();

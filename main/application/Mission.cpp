@@ -14,7 +14,23 @@ bool Mission::enqueueDemoMission(QueueHandle_t motion_queue)
 
 bool Mission::pushEncoderDemoMission(QueueHandle_t motion_queue)
 {
-    return pushMove(motion_queue, 1.0f, 0.2f);
+    return pushMove(motion_queue, 2.0f, 0.2f) &&
+           pushMove(motion_queue, 2.0f, 0.4f) &&
+           pushMove(motion_queue, 2.0f, 0.58f) &&
+           pushStop(motion_queue);
+}
+
+bool Mission::enqueueTurnTestMission(QueueHandle_t motion_queue)
+{
+    return pushTurn(motion_queue, 90.0f) &&
+           pushWait(motion_queue, 5.0f) &&
+           pushTurn(motion_queue, 90.0f) &&
+           pushWait(motion_queue, 5.0f) &&
+           pushTurn(motion_queue, 90.0f) &&
+           pushWait(motion_queue, 5.0f) &&
+           pushTurn(motion_queue, 90.0f) &&
+           pushWait(motion_queue, 5.0f) &&
+           pushStop(motion_queue);
 }
 
 bool Mission::pushMove(QueueHandle_t motion_queue, float distance_m, float speed_mps)
@@ -26,6 +42,12 @@ bool Mission::pushMove(QueueHandle_t motion_queue, float distance_m, float speed
 bool Mission::pushTurn(QueueHandle_t motion_queue, float angle_deg)
 {
     const model::MotionCommand command{model::MotionType::TURN_ANGLE, angle_deg, 0.0f};
+    return xQueueSend(motion_queue, &command, 0) == pdTRUE;
+}
+
+bool Mission::pushWait(QueueHandle_t motion_queue, float duration_s)
+{
+    const model::MotionCommand command{model::MotionType::WAIT_SECONDS, duration_s, 0.0f};
     return xQueueSend(motion_queue, &command, 0) == pdTRUE;
 }
 

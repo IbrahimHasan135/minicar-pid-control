@@ -33,9 +33,11 @@ private:
     void startPendingCommand();
     void startMove(const model::MotionCommand& command);
     void startTurn(const model::MotionCommand& command);
+    void startWait(const model::MotionCommand& command);
     void handleSnapshot(const MotionControlSnapshot& snapshot, float dt_s);
     void handleMove(const MotionControlSnapshot& snapshot, float dt_s);
     void handleTurn(const MotionControlSnapshot& snapshot, float dt_s);
+    void handleWait(const MotionControlSnapshot& snapshot);
     void stopAndIdle();
     void failSafeStop();
     void applySpeedControl(float dt_s);
@@ -44,6 +46,7 @@ private:
     bool servicesReady() const;
     bool isValidMove(const model::MotionCommand& command) const;
     bool isValidTurn(const model::MotionCommand& command) const;
+    bool isValidWait(const model::MotionCommand& command) const;
 
     MotionControlContext& context_;
     service::MotorControlService& motor_service_;
@@ -60,6 +63,7 @@ private:
     float previous_right_output_{0.0f};
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
+    TickType_t wait_until_tick_{0};
 };
 
 }  // namespace minicar::logic::motion_control

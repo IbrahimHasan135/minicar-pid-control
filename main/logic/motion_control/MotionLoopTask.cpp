@@ -108,6 +108,9 @@ void MotionLoopTask::startPendingCommand()
     case model::MotionType::TURN_ANGLE:
         startTurn(command);
         break;
+    case model::MotionType::WAIT_SECONDS:
+        startWait(command);
+        break;
     case model::MotionType::STOP:
         stopAndIdle();
         break;
@@ -164,6 +167,25 @@ void MotionLoopTask::startTurn(const model::MotionCommand& command)
     context_.beginTurn(command.value, target_heading_deg);
 }
 
+void MotionLoopTask::startWait(const model::MotionCommand& command)
+{
+    if (!isValidWait(command)) {
+        failSafeStop();
+        return;
+    }
+
+    left_target_mps_ = 0.0f;
+    right_target_mps_ = 0.0f;
+    motor_service_.stopMotor();
+    left_speed_pid_.reset();
+    right_speed_pid_.reset();
+    previous_left_output_ = 0.0f;
+    previous_right_output_ = 0.0f;
+    wait_until_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(
+        static_cast<uint32_t>(command.value * 1000.0f));
+    context_.beginWait(command.value);
+}
+
 void MotionLoopTask::handleSnapshot(const MotionControlSnapshot& snapshot, float dt_s)
 {
     switch (snapshot.state) {
@@ -178,6 +200,9 @@ void MotionLoopTask::handleSnapshot(const MotionControlSnapshot& snapshot, float
     case model::MotionState::TURNING:
         handleTurn(snapshot, dt_s);
         break;
+    case model::MotionState::WAITING:
+        handleWait(snapshot);
+        break;
     case model::MotionState::STOPPING:
         stopAndIdle();
         break;
@@ -185,6 +210,16 @@ void MotionLoopTask::handleSnapshot(const MotionControlSnapshot& snapshot, float
         failSafeStop();
         break;
     }
+}
+
+void MotionLoopTask::handleWait(const MotionControlSnapshot& snapshot)
+{
+    left_target_mps_ = 0.0f;
+    right_target_mps_ = 0.0f;
+    if (static_cast<int32_t>(xTaskGetTickCount() - wait_until_tick_) >= 0) {
+        context_.setCompleted();
+    }
+    (void)snapshot;
 }
 
 void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_s)
@@ -356,6 +391,11 @@ bool MotionLoopTask::isValidMove(const model::MotionCommand& command) const
 bool MotionLoopTask::isValidTurn(const model::MotionCommand& command) const
 {
     return std::isfinite(command.value) && std::fabs(command.value) > 0.0f && std::fabs(command.value) <= 360.0f;
+}
+
+bool MotionLoopTask::isValidWait(const model::MotionCommand& command) const
+{
+    return std::isfinite(command.value) && command.value > 0.0f && command.value <= 300.0f;
 }
 
 }  // namespace minicar::logic::motion_control

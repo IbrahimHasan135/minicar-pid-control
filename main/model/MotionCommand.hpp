@@ -7,6 +7,7 @@ namespace minicar::model {
 enum class MotionType : uint8_t {
     MOVE_DISTANCE,
     TURN_ANGLE,
+    WAIT_SECONDS,
     STOP,
 };
 
