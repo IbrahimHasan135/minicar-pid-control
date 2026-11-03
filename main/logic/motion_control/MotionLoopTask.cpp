@@ -160,6 +160,7 @@ void MotionLoopTask::startTurn(const model::MotionCommand& command)
     left_speed_pid_.reset();
     right_speed_pid_.reset();
     heading_service_.resetController();
+    turn_direction_ = (command.value >= 0.0f) ? 1.0f : -1.0f;
 
     const float target_heading_deg = service::HeadingService::normalizeAngleDeg(
         heading_service_.getHeadingDeg() + command.value);
@@ -253,8 +254,9 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         snapshot.target_heading_deg,
         heading_service_.getHeadingDeg());
 
-    if (std::fabs(angle_error_deg) <= config::robot::TURN_ANGLE_TOLERANCE_DEG &&
-        std::fabs(heading_service_.getYawRateDps()) <= config::robot::TURN_YAW_RATE_TOLERANCE_DPS) {
+    // Stop when the measured heading reaches or crosses the target. Do not
+    // reverse to correct overshoot during this open-loop turn test.
+    if ((turn_direction_ * angle_error_deg) <= 0.0f) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
@@ -262,16 +264,17 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         return;
     }
 
-    // Deliberately bypass heading PID for this bench test. Keep wheel-speed
-    // PID active, but choose the turn direction from the sign of the angle
-    // error and use a conservative fixed wheel speed.
+    // Deliberately bypass both heading PID and wheel-speed PID for this bench
+    // test. Run both motors at a fixed, opposite PWM until the IMU crosses the
+    // requested heading.
     (void)dt_s;
-    const float turn_direction = (angle_error_deg >= 0.0f) ? 1.0f : -1.0f;
-    const float turn_wheel_speed_mps =
-        turn_direction * config::robot::OPEN_LOOP_TURN_WHEEL_SPEED_MPS;
-
-    left_target_mps_ = turn_wheel_speed_mps;
-    right_target_mps_ = -turn_wheel_speed_mps;
+    const float left_output = turn_direction_ * config::robot::OPEN_LOOP_TURN_OUTPUT;
+    const float right_output = -left_output;
+    left_target_mps_ = turn_direction_;
+    right_target_mps_ = -turn_direction_;
+    previous_left_output_ = left_output;
+    previous_right_output_ = right_output;
+    motor_service_.setMotorOutputs(left_output, right_output);
 }
 
 void MotionLoopTask::stopAndIdle()
@@ -303,6 +306,10 @@ void MotionLoopTask::failSafeStop()
 
 void MotionLoopTask::applySpeedControl(float dt_s)
 {
+    if (context_.snapshot().state == model::MotionState::TURNING) {
+        return;
+    }
+
     if (std::fabs(left_target_mps_) <= 0.001f && std::fabs(right_target_mps_) <= 0.001f) {
         left_speed_pid_.reset();
         right_speed_pid_.reset();
