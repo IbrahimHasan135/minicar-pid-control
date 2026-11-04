@@ -6,6 +6,7 @@
 #include "config/MotorHardwareConfig.hpp"
 #include "driver/imu/IMUDriver.hpp"
 #include "driver/motor/MotorEncoderDriver.hpp"
+#include "driver/navigation/NavigationSerialDriver.hpp"
 #include "driver/telemetry/ConsoleDriver.hpp"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -13,6 +14,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "logic/TelemetryTask.hpp"
+#include "logic/NavigationSerialTask.hpp"
 #include "logic/motion_control/MotionCommandTask.hpp"
 #include "logic/motion_control/MotionControlContext.hpp"
 #include "logic/motion_control/MotionLoopTask.hpp"
@@ -20,6 +22,7 @@
 #include "model/TelemetryMessage.hpp"
 #include "service/heading/HeadingService.hpp"
 #include "service/motor/MotorControlService.hpp"
+#include "service/navigation/NavigationSerialService.hpp"
 #include "service/odometry/OdometryService.hpp"
 #include "service/telemetry/TelemetryService.hpp"
 
@@ -46,11 +49,14 @@ extern "C" void app_main(void)
     static driver::MotorEncoderDriver right_motor_driver(config::motor_hardware::RIGHT_MOTOR);
     static driver::IMUDriver imu_driver;
     static driver::ConsoleDriver console_driver;
+    static driver::NavigationSerialDriver navigation_serial_driver;
 
     static service::MotorControlService motor_service(left_motor_driver, right_motor_driver);
     static service::HeadingService heading_service(imu_driver);
     static service::OdometryService odometry_service;
     static service::TelemetryService telemetry_service(console_driver);
+    static service::NavigationSerialService navigation_serial_service(
+        navigation_serial_driver);
 
     static logic::motion_control::MotionControlContext motion_context;
 
@@ -67,7 +73,8 @@ extern "C" void app_main(void)
     }
 
     if (telemetry_service.init() != ESP_OK || motor_service.init() != ESP_OK ||
-        odometry_service.init() != ESP_OK || heading_service.init() != ESP_OK) {
+        odometry_service.init() != ESP_OK || heading_service.init() != ESP_OK ||
+        navigation_serial_service.init() != ESP_OK) {
         ESP_LOGE(TAG, "required service initialization failed");
         motor_service.stopMotor();
         return;
@@ -83,12 +90,27 @@ extern "C" void app_main(void)
     static logic::motion_control::MotionLoopTask motion_loop_task(
         motion_context, motor_service, heading_service, odometry_service, telemetry_queue);
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
+    static logic::NavigationSerialTask navigation_serial_task(
+        navigation_serial_service);
+
+    if (navigation_serial_task.init() != ESP_OK) {
+        ESP_LOGE(TAG, "navigation StreamBuffer creation failed");
+        motor_service.stopMotor();
+        return;
+    }
 
     (void)telemetry_task.start();
     (void)motion_loop_task.start();
     (void)motion_command_task.start();
+    if (navigation_serial_task.start() != ESP_OK) {
+        ESP_LOGE(TAG, "navigation FreeRTOS tasks failed to start");
+        motor_service.stopMotor();
+        return;
+    }
     // SerialTask is intentionally disabled until SerialDriver is implemented.
 
-    publishStartupTelemetry(telemetry_queue, "mini car tasks started");
-    (void)application::Mission::enqueueSquareMission(motion_queue);
+    publishStartupTelemetry(
+        telemetry_queue,
+        "integration mode ready; motor remains stopped; UART2 RX GPIO32");
+    motor_service.stopMotor();
 }

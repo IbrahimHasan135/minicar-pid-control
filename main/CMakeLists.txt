@@ -5,8 +5,10 @@ idf_component_register(
         "driver/communication/SerialDriver.cpp"
         "driver/imu/IMUDriver.cpp"
         "driver/motor/MotorEncoderDriver.cpp"
+        "driver/navigation/NavigationSerialDriver.cpp"
         "driver/telemetry/ConsoleDriver.cpp"
         "logic/SerialTask.cpp"
+        "logic/NavigationSerialTask.cpp"
         "logic/TelemetryTask.cpp"
         "logic/motion_control/MotionCommandTask.cpp"
         "logic/motion_control/MotionControlContext.cpp"
@@ -15,6 +17,7 @@ idf_component_register(
         "service/control/PIDController.cpp"
         "service/heading/HeadingService.cpp"
         "service/motor/MotorControlService.cpp"
+        "service/navigation/NavigationSerialService.cpp"
         "service/odometry/OdometryService.cpp"
         "service/telemetry/TelemetryService.cpp"
     INCLUDE_DIRS
@@ -23,5 +26,6 @@ idf_component_register(
         driver
         esp_timer
         freertos
+        json
         log
 )
