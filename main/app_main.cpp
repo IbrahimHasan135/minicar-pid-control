@@ -4,6 +4,9 @@
 #include "application/Mission.hpp"
 #include "config/FreeRTOSConfig.hpp"
 #include "config/MotorHardwareConfig.hpp"
+#include "config/NetworkConfig.hpp"
+#include "driver/communication/MqttDriver.hpp"
+#include "driver/communication/WifiDriver.hpp"
 #include "driver/imu/IMUDriver.hpp"
 #include "driver/motor/MotorEncoderDriver.hpp"
 #include "driver/telemetry/ConsoleDriver.hpp"
@@ -13,12 +16,16 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "logic/TelemetryTask.hpp"
+#include "logic/communication/MqttPublishEventQueue.hpp"
+#include "logic/communication/WifiMqttTask.hpp"
 #include "logic/motion_control/MotionCommandTask.hpp"
 #include "logic/motion_control/MotionControlContext.hpp"
 #include "logic/motion_control/MotionLoopTask.hpp"
 #include "model/MotionCommand.hpp"
 #include "model/TelemetryMessage.hpp"
 #include "service/heading/HeadingService.hpp"
+#include "service/communication/MqttCommunicationService.hpp"
+#include "service/communication/WifiService.hpp"
 #include "service/motor/MotorControlService.hpp"
 #include "service/odometry/OdometryService.hpp"
 #include "service/telemetry/TelemetryService.hpp"
@@ -46,11 +53,19 @@ extern "C" void app_main(void)
     static driver::MotorEncoderDriver right_motor_driver(config::motor_hardware::RIGHT_MOTOR);
     static driver::IMUDriver imu_driver;
     static driver::ConsoleDriver console_driver;
+    static driver::WifiDriver wifi_driver;
+    static driver::MqttDriver mqtt_driver;
 
     static service::MotorControlService motor_service(left_motor_driver, right_motor_driver);
     static service::HeadingService heading_service(imu_driver);
     static service::OdometryService odometry_service;
     static service::TelemetryService telemetry_service(console_driver);
+    static service::WifiService wifi_service(
+        wifi_driver, config::network::WIFI_SSID, config::network::WIFI_PASSWORD);
+    static service::MqttCommunicationService mqtt_communication_service(
+        mqtt_driver, config::network::MQTT_BROKER_URI,
+        config::network::MQTT_USERNAME, config::network::MQTT_PASSWORD,
+        config::network::MQTT_CLIENT_ID, config::network::MQTT_PUBLISH_QOS);
 
     static logic::motion_control::MotionControlContext motion_context;
 
@@ -60,6 +75,7 @@ extern "C" void app_main(void)
     static QueueHandle_t telemetry_queue = xQueueCreate(
         config::rtos::TELEMETRY_QUEUE_LENGTH,
         sizeof(model::TelemetryMessage));
+    static logic::MqttPublishEventQueue mqtt_publish_queue;
 
     if (motion_queue == nullptr || telemetry_queue == nullptr) {
         ESP_LOGE(TAG, "queue creation failed");
@@ -83,10 +99,20 @@ extern "C" void app_main(void)
     static logic::motion_control::MotionLoopTask motion_loop_task(
         motion_context, motor_service, heading_service, odometry_service, telemetry_queue);
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
+    static logic::WifiMqttTask wifi_mqtt_task(
+        mqtt_publish_queue, wifi_service, mqtt_communication_service);
 
     (void)telemetry_task.start();
     (void)motion_loop_task.start();
     (void)motion_command_task.start();
+    const esp_err_t mqtt_queue_result = mqtt_publish_queue.create(
+        config::network::MQTT_PUBLISH_QUEUE_LENGTH);
+    if (mqtt_queue_result == ESP_OK) {
+        const BaseType_t task_result = wifi_mqtt_task.start();
+        if (task_result != pdPASS) ESP_LOGE(TAG, "Wi-Fi/MQTT task creation failed");
+    } else {
+        ESP_LOGE(TAG, "MQTT publish queue unavailable; motion tasks continue without MQTT");
+    }
     // SerialTask is intentionally disabled until SerialDriver is implemented.
 
     publishStartupTelemetry(telemetry_queue, "mini car tasks started");

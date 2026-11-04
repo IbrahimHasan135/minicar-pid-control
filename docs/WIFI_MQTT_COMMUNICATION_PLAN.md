@@ -1,166 +1,110 @@
-# Rancangan Komunikasi Wi-Fi dan MQTT
+# Wi-Fi and MQTT Outbound Communication
 
-Status dokumen: **rancangan awal; belum ada implementasi**  
+Status: **outbound queue and connection watchdog implemented; credentials intentionally blank**  
 Branch: `feat/wifi-mqtt-com`  
-Target project: ESP-IDF 5.4.4, ESP32 DevKit V1, C++, FreeRTOS
+Target: ESP-IDF 5.4.4, ESP32 DevKit V1, C++, FreeRTOS
 
-Dokumen ini menetapkan rancangan awal penambahan komunikasi Wi-Fi dan MQTT pada mini car. Perubahan kode, konfigurasi build, dan dependency MQTT belum dilakukan. Nilai kredensial, alamat broker, topik final, dan format payload masih perlu diputuskan sebelum implementasi.
+This layer keeps Wi-Fi/MQTT lifecycle and publishing separate from motion control. It only publishes JSON events submitted by other tasks. MQTT command reception, subscription, and command parsing are outside this phase.
 
-## 1. Temuan pada repository
-
-- Arsitektur yang berlaku adalah `Application → Logic/Task → Service → Driver → Hardware`. Logic memiliki runtime flow dan queue; service menyediakan capability; driver menangani peripheral.
-- Jalur perintah yang direncanakan saat ini adalah `SerialTask → CommunicationService → SerialDriver → MotionCommandQueue`. Namun `SerialDriver::init()` masih mengembalikan `ESP_ERR_NOT_SUPPORTED`, dan serial task belum dijalankan dari `app_main()`.
-- `CommunicationService` saat ini khusus membaca baris serial dan mengubah `STOP`, `MOVE <distance_m> <speed_mps>`, serta `TURN <angle_deg>` menjadi `MotionCommand`.
-- `MotionCommandQueue` berkapasitas 12. `MotionCommandTask` memasukkan perintah ke `MotionControlContext`; context sudah punya `requestStop()` untuk permintaan stop.
-- Telemetry saat ini mengalir melalui `TelemetryQueue → TelemetryTask → TelemetryService → ConsoleDriver`. Pesan telemetry berisi timestamp, level, tag, dan teks, dan dibuat periodik dari `MotionLoopTask`.
-- File sumber komponen didaftarkan eksplisit di `main/CMakeLists.txt`.
-
-## 2. Sasaran dan batas
-
-Sasaran tahap komunikasi:
-
-1. ESP32 bergabung ke Wi-Fi dalam mode station.
-2. ESP32 terhubung dan tersambung kembali ke broker MQTT.
-3. Perintah jarak jauh diterjemahkan menjadi model `MotionCommand` yang sudah ada.
-4. Telemetry mini car dapat diterbitkan ke topic MQTT.
-5. Komunikasi yang terputus tidak menghentikan atau menunda control loop 100 Hz.
-
-Tahap ini tidak mengubah algoritma motion control, PID, odometry, hardware motor/IMU, atau menambah algoritma localization. Serial tetap menjadi transport terpisah dan tidak diganti diam-diam oleh MQTT.
-
-## 3. Pembagian layer yang diusulkan
+## Layer ownership
 
 ```text
 Application / app_main
-    membuat driver, service, queue, dan task; menginjeksikan dependency
+    constructs drivers, services, event queue, and WifiMqttTask
 
-Logic / Task
-    WifiMqttTask: startup berurutan, status jaringan, retry, dan lifecycle runtime
-    MotionCommandTask: tetap menjadi pemilik pemrosesan antrean perintah gerak
-    TelemetryTask: tetap menjadi pemilik konsumsi TelemetryQueue
+Logic
+    MqttPublishEventQueue: bounded push/pull queue for outbound JSON events
+    WifiMqttTask: Wi-Fi/MQTT watchdog, retry cadence, and queue consumer
 
 Service
-    WifiService: capability koneksi station dan status Wi-Fi
-    MqttCommunicationService: sesi/topik MQTT, validasi payload perintah,
-                              konversi MotionCommand, dan serialisasi telemetry
+    WifiService: Wi-Fi station capability
+    MqttCommunicationService: MQTT lifecycle request and JSON publish capability
 
 Driver
-    WifiDriver: init/config/connect/status Wi-Fi ESP-IDF
-    MqttDriver: init/connect/subscribe/publish MQTT ESP-IDF
-
-Hardware / ESP-IDF
-    esp_wifi, esp_netif, event loop, TCP/IP, ESP-MQTT
+    WifiDriver: ESP-IDF Wi-Fi/netif calls and connection state
+    MqttDriver: ESP-MQTT client lifecycle and non-blocking enqueue
 ```
 
-Driver tidak membuat task aplikasi, tidak mengakses queue motion/telemetry, dan tidak memutuskan arti perintah. Service tidak membuat task atau memiliki queue aplikasi. Semua dependency dibuat di `app_main()` dan diberikan melalui constructor atau callback interface yang tidak mengekspos tipe FreeRTOS ke service.
+Dependency construction stays in `app_main()`. A message producer receives an `MqttPublishEventQueue&` and calls its push API. Producers do not access services or drivers. `WifiMqttTask` pulls only while Wi-Fi and MQTT are connected, then passes the event to `MqttCommunicationService`. Services own their matching driver; FreeRTOS queue operations remain in Logic.
 
-### Alur startup dan koneksi
+## Outbound event contract
 
-```text
-app_main
-  → buat WifiDriver dan MqttDriver
-  → buat WifiService dan MqttCommunicationService
-  → buat queue dan WifiMqttTask
-  → WifiMqttTask memulai Wi-Fi
-  → setelah IP tersedia, WifiMqttTask memulai koneksi broker
-  → setelah MQTT tersambung, subscribe topic perintah dan publish status
+`model::MqttPublishEvent` is a fixed-size queue item with:
+
+- `topic[96]`
+- `json_payload[512]`
+
+The queue has 8 slots. A producer enqueues with:
+
+```cpp
+const bool queued = mqtt_publish_queue.pushJson(
+    "minicar/demo/telemetry",
+    R"({"kind":"sample","value":12.5})",
+    0);  // no wait; false means invalid input or a full queue
 ```
 
-`WifiMqttTask` memiliki state runtime seperti `WIFI_CONNECTING`, `WAITING_FOR_IP`, `MQTT_CONNECTING`, `ONLINE`, dan `RETRY_WAIT`. Penanganan retry bersifat non-blocking dan hanya memengaruhi jalur komunikasi. `MotionLoopTask` tetap berjalan ketika Wi-Fi atau broker tidak tersedia.
+The payload is forwarded unchanged; the communication layer does not interpret or build JSON. Producers should treat a `false` return as a dropped event and decide whether to count, retry, or discard it. Keep the payload shorter than 512 bytes and the topic shorter than 96 bytes, including the terminating NUL requirement.
 
-### Alur perintah masuk
+When disconnected, the task does not drain the queue. It keeps at most one already-pulled event as a pending item if the MQTT outbox rejects it, while newer events remain in the bounded FreeRTOS queue. This preserves FIFO ordering and bounds RAM usage. A full queue applies backpressure through `pushJson()` returning `false`; the task never blocks the motion loop.
 
-```text
-Broker MQTT
-  → MqttDriver menerima event/payload
-  → MqttCommunicationService memvalidasi JSON dan menghasilkan MotionCommand
-  → Logic memasukkan perintah ke MotionCommandQueue
-  → MotionCommandTask menyerahkan perintah ke MotionControlContext
-  → MotionLoopTask menjalankan command melalui service yang ada
+The MQTT driver uses `esp_mqtt_client_enqueue()` at QoS 1 with retain disabled. This copies accepted messages to ESP-MQTT's internal outbox for asynchronous transmission. The FreeRTOS event is released once accepted by that outbox; it is not a persistent disk queue, so power loss can discard queued data.
+
+## Connection watchdog
+
+`WifiMqttTask` runs independently of `MotionLoopTask` and checks connectivity every 100 ms:
+
+1. If Wi-Fi credentials are present, it initializes the station and requests a connection when disconnected/not connecting. Retries are spaced by 5 seconds.
+2. It initializes MQTT only when a broker URI is configured, and starts MQTT only after Wi-Fi has received an IP address.
+3. MQTT automatic reconnect is disabled so the task owns retry timing. It requests reconnect every 5 seconds while Wi-Fi is available and MQTT is disconnected.
+4. If Wi-Fi drops, MQTT publishing pauses. The current event and queued events are retained in RAM until reconnect or queue capacity is reached.
+5. If either configuration is blank, the relevant network path stays inactive; motion and telemetry tasks continue.
+
+`WifiDriver` stores Wi-Fi credentials in RAM and does not erase NVS. Broker scheme/port and TLS settings will be selected when a real broker is provided. Credentials are not logged.
+
+## Configuration
+
+The initial placeholders are in `main/config/NetworkConfig.hpp` and are intentionally empty:
+
+```cpp
+WIFI_SSID = ""
+WIFI_PASSWORD = ""
+MQTT_BROKER_URI = ""
+MQTT_USERNAME = ""
+MQTT_PASSWORD = ""
 ```
 
-MQTT event callback tidak boleh melakukan parsing berat, menunggu ruang queue, menjalankan motor, atau mengakses `MotionControlContext` secara langsung. Penyerahan perintah ke logic menggunakan antarmuka callback/queue sink yang disediakan saat dependency injection dan pengiriman non-blocking. Perilaku ketika queue penuh harus dilaporkan sebagai command ditolak, bukan membuat task jaringan menunggu.
+No broker or Wi-Fi connection is attempted until the corresponding values are filled. Client ID is also blank, allowing ESP-MQTT's default ID. The queue and connection task are still created, so other tasks can be wired to the event queue without coupling them to network availability.
 
-**STOP:** jalur STOP harus tetap dapat diterima saat antrean command penuh. Sebelum implementasi, tetapkan jalur prioritas yang memakai mekanisme stop yang sudah tersedia (`MotionControlContext::requestStop()` melalui pemilik logic) atau mekanisme prioritas setara. Jangan menempatkan STOP di belakang rangkaian MOVE/TURN biasa.
+## Current scope and non-goals
 
-### Alur telemetry keluar
+- Outbound publish only. There is no MQTT subscribe call, `MQTT_EVENT_DATA` handling, command decoder, or remote motor control.
+- Existing serial `CommunicationService` and `SerialTask` remain separate and unchanged.
+- Existing `TelemetryQueue → TelemetryTask → TelemetryService → ConsoleDriver` remains unchanged. Telemetry is not automatically sent to MQTT; a producer must explicitly call `mqtt_publish_queue.pushJson(...)`.
+- No Wi-Fi or MQTT secrets, URI, topic convention, or TLS certificate has been selected.
+- No changes to motion PID, odometry, motor/IMU services, or localization.
 
-```text
-MotionLoopTask
-  → TelemetryQueue (kirim tanpa menunggu)
-  → TelemetryTask
-      → TelemetryService → ConsoleDriver (jalur saat ini)
-      → MqttCommunicationService → MqttDriver → broker (jalur tambahan)
-```
+## Files added/changed
 
-`TelemetryTask` dapat memanggil kedua service untuk satu item queue. Publikasi MQTT menggunakan QoS yang dipilih untuk telemetry dan tidak boleh menahan control loop. Saat broker terputus, telemetry boleh dilewati atau dibatasi dalam buffer berukuran tetap; jangan menambah antrean tak terbatas atau menahan semua gerak.
+- `main/config/NetworkConfig.hpp`: blank credentials, queue/task sizing, retry periods, QoS.
+- `main/model/MqttPublishEvent.hpp`: fixed-size publish event.
+- `main/logic/communication/MqttPublishEventQueue.*`: bounded event queue and producer API.
+- `main/logic/communication/WifiMqttTask.*`: connection watchdog and queue consumer.
+- `main/driver/communication/WifiDriver.*` and `MqttDriver.*`: ESP-IDF/ESP-MQTT adapters.
+- `main/service/communication/WifiService.*` and `MqttCommunicationService.*`: capability APIs.
+- `main/app_main.cpp`, `main/CMakeLists.txt`: dependency injection, task startup, and component dependencies.
 
-## 4. Kontrak MQTT awal untuk ditinjau
+ESP-MQTT is used through the ESP-IDF 5.4.4 `mqtt` component; the component requirements are listed in `main/CMakeLists.txt`.
 
-Nama berikut usulan awal, bukan konfigurasi final:
+## Next configuration decisions
 
-| Fungsi | Topic usulan | QoS | Retain |
-|---|---|---:|---|
-| Perintah ke mobil | `minicar/{device_id}/command` | 1 | Tidak |
-| Telemetry dari mobil | `minicar/{device_id}/telemetry` | 0 | Tidak |
-| Status koneksi/perangkat | `minicar/{device_id}/status` | 1 | Ya; pesan LWT untuk offline |
+Before using the network path, provide:
 
-Perintah sebaiknya memakai JSON berversi dan `command_id` agar pengirim dapat mengaitkan hasil/penolakan serta mendeteksi pengiriman ulang QoS 1. Contoh rancangan:
+1. Wi-Fi SSID and password, plus the intended provisioning method.
+2. MQTT URI, authentication, and transport/TLS requirements.
+3. Topic names for each producer and whether any event needs a different QoS or retain setting.
+4. A policy for each producer when `pushJson()` returns `false` because the bounded queue is full.
 
-```json
-{"version":1,"command_id":"cmd-001","type":"MOVE","distance_m":1.0,"speed_mps":0.2}
-{"version":1,"command_id":"cmd-002","type":"TURN","angle_deg":90}
-{"version":1,"command_id":"cmd-003","type":"STOP"}
-```
+## References
 
-Field MOVE/TURN dipetakan ke nilai dan tipe `MotionCommand` yang telah ada. Validasi harus menolak JSON rusak, versi/tipe tidak dikenal, nilai non-finite, jarak nol, speed tidak positif atau melebihi `MAX_LINEAR_SPEED_MPS`, dan sudut di luar batas yang diterima motion logic. Perintah yang ditolak tidak boleh masuk queue. Rincian batas validasi perlu disamakan dengan validator `MotionLoopTask` agar aturan tidak berbeda.
-
-Payload telemetry tahap pertama dapat membungkus field `TelemetryMessage` yang sudah ada (`timestamp_ms`, `level`, `tag`, `message`). Penambahan posisi `Pose2D` atau state lain dilakukan hanya jika ada kebutuhan konsumen yang jelas dan disepakati.
-
-## 5. Wi-Fi, broker, dan keamanan
-
-- Kredensial Wi-Fi, username/password broker, URI, port, dan device ID harus berasal dari konfigurasi terpisah, bukan literal di source. Pilih mekanisme `menuconfig`/`Kconfig`, provisioning, atau konfigurasi lokal sebelum coding.
-- Gunakan MQTT melalui TLS (`mqtts://`) untuk broker di jaringan yang tidak sepenuhnya dipercaya; verifikasi CA sertifikat broker. Jangan menonaktifkan verifikasi sertifikat sebagai jalan pintas.
-- Jangan cetak password, token, atau payload sensitif ke log.
-- Batasi ukuran payload dan ukuran topic yang diterima. Tangani payload MQTT terfragmentasi sebelum parsing JSON; event MQTT dapat menyampaikan potongan data untuk pesan panjang.
-- Status `online` baru dipublikasikan setelah MQTT benar-benar terhubung dan subscription berhasil. Atur Last Will untuk menandai `offline` bila koneksi terputus tak terduga.
-- MQTT QoS 1 dapat menghasilkan pesan duplikat. Terapkan deduplikasi berbasis `command_id` atau dokumentasikan semantik idempotent sebelum perintah berulang diizinkan.
-
-## 6. Dampak integrasi yang diharapkan
-
-Saat rancangan disetujui dan implementasi dimulai, perubahan kemungkinan diperlukan pada:
-
-- `main/driver/communication/` untuk driver Wi-Fi dan MQTT;
-- `main/service/communication/` untuk service komunikasi MQTT dan validasi/serialisasi protocol;
-- `main/logic/` untuk task lifecycle dan event jaringan;
-- `main/config/` untuk konfigurasi Wi-Fi, broker, topik, dan ukuran buffer;
-- `main/app_main.cpp` untuk dependency injection dan startup;
-- `main/CMakeLists.txt` dan konfigurasi component untuk dependency Wi-Fi/MQTT;
-- README/dokumen arsitektur dan tes parser/protokol.
-
-File/file class final dapat berubah setelah rancangan ditinjau. Perubahan tersebut belum dibuat pada branch ini.
-
-## 7. Pertanyaan yang harus diputuskan sebelum coding
-
-1. Broker tujuan, URI/port, TLS/CA, username/password, dan apakah broker dapat diakses langsung oleh ESP32.
-2. SSID/password Wi-Fi, cara provisioning, dan apakah koneksi hanya 2.4 GHz.
-3. Device ID dan topic final, termasuk kebutuhan beberapa mobil.
-4. Apakah format command JSON di atas diterima, serta apakah perlu response/ack topic untuk diterima, ditolak, selesai, dan gagal.
-5. Kebijakan perintah saat motion sedang sibuk: tolak, antre, atau ganti command aktif; STOP tetap jalur prioritas.
-6. Field telemetry yang dibutuhkan, interval publikasi, dan apakah ConsoleDriver tetap menerima setiap telemetry.
-7. Batas payload, buffering saat offline, dan kebijakan drop/backoff.
-
-## 8. Urutan implementasi setelah rancangan disetujui
-
-1. Putuskan broker, credentials/provisioning, topics, payload schema, dan command-busy policy.
-2. Tambahkan config model serta kontrak API driver Wi-Fi/MQTT; tetapkan error/status contract.
-3. Implementasikan driver lalu service dengan dependency injection; driver hanya mengakses API ESP-IDF.
-4. Implementasikan task state machine Wi-Fi/IP/MQTT/reconnect tanpa mengubah timing motion loop.
-5. Integrasikan command sink ke antrean motion dan jalur STOP prioritas.
-6. Tambahkan publikasi MQTT ke jalur TelemetryTask yang sudah ada dengan perilaku offline terbatas.
-7. Tambahkan unit test parser/validator, build ESP-IDF, lalu verifikasi di broker dan perangkat nyata.
-
-## Referensi teknis
-
-- [ESP-IDF v5.4.4 Wi-Fi Driver guide](https://docs.espressif.com/projects/esp-idf/en/v5.4.4/esp32/api-guides/wifi.html) menjelaskan init Wi-Fi station, event, got-IP, dan pemulihan disconnect.
-- [ESP-IDF v5.4.4 ESP-MQTT guide](https://docs.espressif.com/projects/esp-idf/en/v5.4.4/esp32/api-reference/protocols/mqtt.html) mendokumentasikan transport TCP/TLS/WS, subscribe/publish, autentikasi, QoS, dan event payload.
-- Repository ini menargetkan ESP-IDF 5.4.4; panduan tersebut menyebut component MQTT sebagai `mqtt` pada `REQUIRES`/`PRIV_REQUIRES`. Verifikasi dependency aktual saat konfigurasi build dibuat.
+- [ESP-IDF v5.4.4 Wi-Fi Driver guide](https://docs.espressif.com/projects/esp-idf/en/v5.4.4/esp32/api-guides/wifi.html)
+- [ESP-IDF v5.4.4 ESP-MQTT guide](https://docs.espressif.com/projects/esp-idf/en/v5.4.4/esp32/api-reference/protocols/mqtt.html)
