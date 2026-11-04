@@ -2,13 +2,14 @@
 
 namespace minicar::config::robot {
 
-constexpr float WHEEL_DIAMETER_M = 0.065f;
+constexpr float WHEEL_DIAMETER_M = 0.064f;
 constexpr float WHEEL_BASE_M = 0.145f;
 constexpr int ENCODER_TICKS_PER_REV = 360;
 
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
+constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
 constexpr float MAX_MOTOR_OUTPUT = 1.0f;
 constexpr float MIN_MOTOR_OUTPUT = -1.0f;
 

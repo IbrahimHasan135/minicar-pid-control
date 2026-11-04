@@ -92,6 +92,18 @@ void MotionControlContext::beginTurn(float angle_deg, float target_heading_deg)
     taskEXIT_CRITICAL(&spinlock_);
 }
 
+void MotionControlContext::beginWait(float duration_s)
+{
+    taskENTER_CRITICAL(&spinlock_);
+    snapshot_.state = model::MotionState::WAITING;
+    snapshot_.active_command = model::MotionCommand{model::MotionType::WAIT_SECONDS, duration_s, 0.0f};
+    snapshot_.target_distance_m = 0.0f;
+    snapshot_.target_speed_mps = 0.0f;
+    snapshot_.start_distance_m = 0.0f;
+    snapshot_.target_heading_deg = 0.0f;
+    taskEXIT_CRITICAL(&spinlock_);
+}
+
 void MotionControlContext::setCompleted()
 {
     taskENTER_CRITICAL(&spinlock_);
@@ -127,6 +139,7 @@ bool MotionControlContext::stateIsBusyLocked() const
 {
     return snapshot_.state == model::MotionState::MOVING ||
            snapshot_.state == model::MotionState::TURNING ||
+           snapshot_.state == model::MotionState::WAITING ||
            snapshot_.state == model::MotionState::STOPPING;
 }
 

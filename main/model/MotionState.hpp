@@ -8,6 +8,7 @@ enum class MotionState : uint8_t {
     IDLE,
     MOVING,
     TURNING,
+    WAITING,
     STOPPING,
     COMPLETED,
     ERROR,

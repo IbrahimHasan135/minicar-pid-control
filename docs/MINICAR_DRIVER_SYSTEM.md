@@ -109,9 +109,11 @@ MotorControlService(
 Service ini yang mengelola:
 
 - left/right feedback,
-- left/right velocity target,
-- left/right speed PID,
 - output ke driver kiri dan kanan.
+
+`PIDController` berada di layer service sebagai helper matematika, tetapi
+control loop (`main.cpp` saat bring-up dan nantinya `MotionLoopTask`) yang
+menentukan target, memanggil PID, dan mengirim hasilnya ke service.
 
 Driver tidak perlu membuat PID dan tidak perlu tahu differential drive.
 
@@ -129,13 +131,18 @@ TURN left:
     right target = positive
 ```
 
-Saat ini logic mengirim target wheel speed ke service:
+Saat ini logic menghitung output PID lalu mengirim output motor ke service:
 
 ```cpp
-motor_service.setVelocityTargets(left_mps, right_mps);
+motor_service.refreshFeedback();
+const float left_output = left_pid.update(
+    left_target_mps,
+    motor_service.getLeftVelocityMps(),
+    dt_s);
+motor_service.setMotorOutputs(left_output, right_output);
 ```
 
-Lalu `MotorControlService` menghitung output PID dan memanggil:
+Lalu `MotorControlService` meneruskan output ke driver:
 
 ```cpp
 left_driver.setOutput(left_output);
