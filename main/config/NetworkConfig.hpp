@@ -8,10 +8,11 @@ namespace minicar::config::network {
 constexpr char WIFI_SSID[] = "";
 constexpr char WIFI_PASSWORD[] = "";
 
-constexpr char MQTT_BROKER_URI[] = "";
+constexpr char MQTT_BROKER_URI[] =
+    "mqtts://668bccff90484ea3a199ae5687d2ad40.s1.eu.hivemq.cloud:8883";
 constexpr char MQTT_USERNAME[] = "";
 constexpr char MQTT_PASSWORD[] = "";
-constexpr char MQTT_CLIENT_ID[] = "";  // Empty lets ESP-MQTT choose its default ID.
+constexpr char MQTT_CLIENT_ID[] = "minicar-arand-test";  // Empty lets ESP-MQTT choose its default ID.
 
 constexpr uint32_t WIFI_RETRY_PERIOD_MS = 5000;
 constexpr uint32_t MQTT_RETRY_PERIOD_MS = 5000;
