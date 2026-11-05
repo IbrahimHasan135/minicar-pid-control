@@ -4,6 +4,10 @@
 #include "application/Mission.hpp"
 #include "config/FreeRTOSConfig.hpp"
 #include "config/MotorHardwareConfig.hpp"
+#include "config/NetworkConfig.hpp"
+#include "driver/communication/MqttDriver.hpp"
+#include "driver/communication/ProvisioningPortalDriver.hpp"
+#include "driver/communication/WifiDriver.hpp"
 #include "driver/imu/IMUDriver.hpp"
 #include "driver/motor/MotorEncoderDriver.hpp"
 #include "driver/navigation/NavigationSerialDriver.hpp"
@@ -15,12 +19,17 @@
 #include "freertos/task.h"
 #include "logic/TelemetryTask.hpp"
 #include "logic/NavigationSerialTask.hpp"
+#include "logic/communication/MqttPublishEventQueue.hpp"
+#include "logic/communication/WifiMqttTask.hpp"
 #include "logic/motion_control/MotionCommandTask.hpp"
 #include "logic/motion_control/MotionControlContext.hpp"
 #include "logic/motion_control/MotionLoopTask.hpp"
 #include "model/MotionCommand.hpp"
 #include "model/TelemetryMessage.hpp"
 #include "service/heading/HeadingService.hpp"
+#include "service/communication/MqttCommunicationService.hpp"
+#include "service/communication/WifiService.hpp"
+#include "service/configuration/NetworkSettingsService.hpp"
 #include "service/motor/MotorControlService.hpp"
 #include "service/navigation/NavigationSerialService.hpp"
 #include "service/odometry/OdometryService.hpp"
@@ -45,11 +54,21 @@ extern "C" void app_main(void)
 {
     using namespace minicar;
 
+    static service::NetworkSettingsService network_settings_service;
+    if (network_settings_service.init() != ESP_OK) {
+        ESP_LOGE(TAG, "network settings initialization failed");
+        return;
+    }
+    const model::NetworkSettings& network_settings = network_settings_service.settings();
+
     static driver::MotorEncoderDriver left_motor_driver(config::motor_hardware::LEFT_MOTOR);
     static driver::MotorEncoderDriver right_motor_driver(config::motor_hardware::RIGHT_MOTOR);
     static driver::IMUDriver imu_driver;
     static driver::ConsoleDriver console_driver;
     static driver::NavigationSerialDriver navigation_serial_driver;
+    static driver::WifiDriver wifi_driver;
+    static driver::MqttDriver mqtt_driver;
+    static driver::ProvisioningPortalDriver provisioning_portal_driver;
 
     static service::MotorControlService motor_service(left_motor_driver, right_motor_driver);
     static service::HeadingService heading_service(imu_driver);
@@ -57,6 +76,14 @@ extern "C" void app_main(void)
     static service::TelemetryService telemetry_service(console_driver);
     static service::NavigationSerialService navigation_serial_service(
         navigation_serial_driver);
+    static service::WifiService wifi_service(
+        wifi_driver, network_settings.wifi_ssid, network_settings.wifi_password,
+        config::network::PROVISIONING_AP_SSID,
+        config::network::PROVISIONING_AP_PASSWORD);
+    static service::MqttCommunicationService mqtt_communication_service(
+        mqtt_driver, network_settings.mqtt_uri,
+        network_settings.mqtt_username, network_settings.mqtt_password,
+        network_settings.mqtt_client_id, config::network::MQTT_PUBLISH_QOS);
 
     static logic::motion_control::MotionControlContext motion_context;
 
@@ -66,6 +93,7 @@ extern "C" void app_main(void)
     static QueueHandle_t telemetry_queue = xQueueCreate(
         config::rtos::TELEMETRY_QUEUE_LENGTH,
         sizeof(model::TelemetryMessage));
+    static logic::MqttPublishEventQueue mqtt_publish_queue;
 
     if (motion_queue == nullptr || telemetry_queue == nullptr) {
         ESP_LOGE(TAG, "queue creation failed");
@@ -82,6 +110,13 @@ extern "C" void app_main(void)
 
     ESP_LOGW(TAG, "IMU calibration sweep disabled; using raw magnetometer heading");
 
+    if (wifi_service.init() != ESP_OK ||
+        provisioning_portal_driver.start(network_settings_service) != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi provisioning portal initialization failed");
+        motor_service.stopMotor();
+        return;
+    }
+
     // SerialTask/CommunicationService are also disabled until SerialDriver is
     // implemented. Telemetry still uses the ConsoleDriver and its queue.
     ESP_LOGI(TAG, "serial task/service disabled until SerialDriver is implemented");
@@ -92,12 +127,13 @@ extern "C" void app_main(void)
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
     static logic::NavigationSerialTask navigation_serial_task(
         navigation_serial_service);
-
     if (navigation_serial_task.init() != ESP_OK) {
         ESP_LOGE(TAG, "navigation StreamBuffer creation failed");
         motor_service.stopMotor();
         return;
     }
+    static logic::WifiMqttTask wifi_mqtt_task(
+        mqtt_publish_queue, wifi_service, mqtt_communication_service);
 
     (void)telemetry_task.start();
     (void)motion_loop_task.start();
@@ -107,10 +143,31 @@ extern "C" void app_main(void)
         motor_service.stopMotor();
         return;
     }
+
+    const esp_err_t mqtt_queue_result = mqtt_publish_queue.create(
+        config::network::MQTT_PUBLISH_QUEUE_LENGTH);
+    if (mqtt_queue_result == ESP_OK) {
+        constexpr char kTestTopic[] = "novalynk/minicar/arand/test";
+        constexpr char kTestPayload[] =
+            "{\"test\":\"wifi-mqtt-step4\",\"value1\":51,\"value2\":48,"
+            "\"value3\":46,\"value4\":106}";
+        const bool test_event_queued = mqtt_publish_queue.pushJson(
+            kTestTopic, kTestPayload, 0);
+        ESP_LOGI(TAG,
+                 "MQTT test event %s: topic=%s payload=%s",
+                 test_event_queued ? "queued" : "rejected",
+                 kTestTopic,
+                 kTestPayload);
+
+        const BaseType_t task_result = wifi_mqtt_task.start();
+        if (task_result != pdPASS) ESP_LOGE(TAG, "Wi-Fi/MQTT task creation failed");
+    } else {
+        ESP_LOGE(TAG, "MQTT publish queue unavailable; motion tasks continue without MQTT");
+    }
     // SerialTask is intentionally disabled until SerialDriver is implemented.
 
     publishStartupTelemetry(
         telemetry_queue,
-        "integration mode ready; motor remains stopped; UART2 RX GPIO32");
+        "navigation UART and Wi-Fi/MQTT ready; motor remains stopped");
     motor_service.stopMotor();
 }
