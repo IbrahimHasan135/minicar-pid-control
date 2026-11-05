@@ -35,11 +35,6 @@ esp_err_t NavigationSerialDriver::init()
             UART_PIN_NO_CHANGE);
     }
     if (result == ESP_OK) {
-        // UART idles HIGH. Keep an unplugged interchangeable node connector
-        // at a defined level instead of leaving the RX input floating.
-        result = gpio_set_pull_mode(RX_GPIO, GPIO_PULLUP_ONLY);
-    }
-    if (result == ESP_OK) {
         result = uart_driver_install(
             UART_PORT,
             UART_RX_BUFFER_SIZE,
@@ -47,6 +42,11 @@ esp_err_t NavigationSerialDriver::init()
             0,
             nullptr,
             0);
+    }
+    if (result == ESP_OK) {
+        // uart_driver_install() may reconfigure the IO. Apply the idle-state
+        // pull-up last so an unplugged interchangeable connector stays HIGH.
+        result = gpio_set_pull_mode(RX_GPIO, GPIO_PULLUP_ONLY);
     }
 
     initialized_ = (result == ESP_OK);
