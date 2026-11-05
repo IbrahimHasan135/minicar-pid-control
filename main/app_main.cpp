@@ -6,6 +6,7 @@
 #include "config/MotorHardwareConfig.hpp"
 #include "config/NetworkConfig.hpp"
 #include "driver/communication/MqttDriver.hpp"
+#include "driver/communication/ProvisioningPortalDriver.hpp"
 #include "driver/communication/WifiDriver.hpp"
 #include "driver/imu/IMUDriver.hpp"
 #include "driver/motor/MotorEncoderDriver.hpp"
@@ -26,6 +27,7 @@
 #include "service/heading/HeadingService.hpp"
 #include "service/communication/MqttCommunicationService.hpp"
 #include "service/communication/WifiService.hpp"
+#include "service/configuration/NetworkSettingsService.hpp"
 #include "service/motor/MotorControlService.hpp"
 #include "service/odometry/OdometryService.hpp"
 #include "service/telemetry/TelemetryService.hpp"
@@ -49,23 +51,33 @@ extern "C" void app_main(void)
 {
     using namespace minicar;
 
+    static service::NetworkSettingsService network_settings_service;
+    if (network_settings_service.init() != ESP_OK) {
+        ESP_LOGE(TAG, "network settings initialization failed");
+        return;
+    }
+    const model::NetworkSettings& network_settings = network_settings_service.settings();
+
     static driver::MotorEncoderDriver left_motor_driver(config::motor_hardware::LEFT_MOTOR);
     static driver::MotorEncoderDriver right_motor_driver(config::motor_hardware::RIGHT_MOTOR);
     static driver::IMUDriver imu_driver;
     static driver::ConsoleDriver console_driver;
     static driver::WifiDriver wifi_driver;
     static driver::MqttDriver mqtt_driver;
+    static driver::ProvisioningPortalDriver provisioning_portal_driver;
 
     static service::MotorControlService motor_service(left_motor_driver, right_motor_driver);
     static service::HeadingService heading_service(imu_driver);
     static service::OdometryService odometry_service;
     static service::TelemetryService telemetry_service(console_driver);
     static service::WifiService wifi_service(
-        wifi_driver, config::network::WIFI_SSID, config::network::WIFI_PASSWORD);
+        wifi_driver, network_settings.wifi_ssid, network_settings.wifi_password,
+        config::network::PROVISIONING_AP_SSID,
+        config::network::PROVISIONING_AP_PASSWORD);
     static service::MqttCommunicationService mqtt_communication_service(
-        mqtt_driver, config::network::MQTT_BROKER_URI,
-        config::network::MQTT_USERNAME, config::network::MQTT_PASSWORD,
-        config::network::MQTT_CLIENT_ID, config::network::MQTT_PUBLISH_QOS);
+        mqtt_driver, network_settings.mqtt_uri,
+        network_settings.mqtt_username, network_settings.mqtt_password,
+        network_settings.mqtt_client_id, config::network::MQTT_PUBLISH_QOS);
 
     static logic::motion_control::MotionControlContext motion_context;
 
@@ -90,6 +102,13 @@ extern "C" void app_main(void)
     }
 
     ESP_LOGW(TAG, "IMU calibration sweep disabled; using raw magnetometer heading");
+
+    if (wifi_service.init() != ESP_OK ||
+        provisioning_portal_driver.start(network_settings_service) != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi provisioning portal initialization failed");
+        motor_service.stopMotor();
+        return;
+    }
 
     // SerialTask/CommunicationService are also disabled until SerialDriver is
     // implemented. Telemetry still uses the ConsoleDriver and its queue.

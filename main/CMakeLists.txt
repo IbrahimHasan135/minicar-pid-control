@@ -5,6 +5,7 @@ idf_component_register(
         "driver/communication/SerialDriver.cpp"
         "driver/communication/WifiDriver.cpp"
         "driver/communication/MqttDriver.cpp"
+        "driver/communication/ProvisioningPortalDriver.cpp"
         "driver/imu/IMUDriver.cpp"
         "driver/motor/MotorEncoderDriver.cpp"
         "driver/telemetry/ConsoleDriver.cpp"
@@ -18,6 +19,7 @@ idf_component_register(
         "service/communication/CommunicationService.cpp"
         "service/communication/WifiService.cpp"
         "service/communication/MqttCommunicationService.cpp"
+        "service/configuration/NetworkSettingsService.cpp"
         "service/control/PIDController.cpp"
         "service/heading/HeadingService.cpp"
         "service/motor/MotorControlService.cpp"
@@ -28,11 +30,13 @@ idf_component_register(
     REQUIRES
         driver
         esp_event
+        esp_http_server
         esp_netif
         esp_timer
         esp_wifi
         freertos
         log
         mqtt
+        mdns
         nvs_flash
 )

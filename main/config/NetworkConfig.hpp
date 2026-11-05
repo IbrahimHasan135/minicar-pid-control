@@ -14,6 +14,10 @@ constexpr char MQTT_USERNAME[] = "";
 constexpr char MQTT_PASSWORD[] = "";
 constexpr char MQTT_CLIENT_ID[] = "minicar-arand-test";  // Empty lets ESP-MQTT choose its default ID.
 
+constexpr char PROVISIONING_AP_SSID[] = "NovaLynk-Minicar-Setup";
+constexpr char PROVISIONING_AP_PASSWORD[] = "novalynk123";
+constexpr char MDNS_HOSTNAME[] = "novalynk-minicar";
+
 constexpr uint32_t WIFI_RETRY_PERIOD_MS = 5000;
 constexpr uint32_t MQTT_RETRY_PERIOD_MS = 5000;
 constexpr uint32_t CONNECTION_TASK_WAKE_PERIOD_MS = 100;

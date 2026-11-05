@@ -2,8 +2,10 @@
 
 namespace minicar::service {
 
-WifiService::WifiService(driver::WifiDriver& driver, const char* ssid, const char* password)
-    : driver_(driver), ssid_(ssid), password_(password)
+WifiService::WifiService(driver::WifiDriver& driver, const char* ssid, const char* password,
+                         const char* ap_ssid, const char* ap_password)
+    : driver_(driver), ssid_(ssid), password_(password),
+      ap_ssid_(ap_ssid), ap_password_(ap_password)
 {
 }
 
@@ -14,8 +16,7 @@ bool WifiService::isConfigured() const
 
 esp_err_t WifiService::init()
 {
-    if (!isConfigured()) return ESP_ERR_INVALID_STATE;
-    return driver_.init(ssid_, password_);
+    return driver_.init(ssid_, password_, ap_ssid_, ap_password_);
 }
 
 esp_err_t WifiService::connect() { return driver_.connect(); }

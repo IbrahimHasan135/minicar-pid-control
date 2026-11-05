@@ -18,16 +18,24 @@ esp_err_t initNvs()
 }
 }  // namespace
 
-esp_err_t WifiDriver::init(const char* ssid, const char* password)
+esp_err_t WifiDriver::init(const char* ssid, const char* password,
+                           const char* ap_ssid, const char* ap_password)
 {
-    if (ssid == nullptr || password == nullptr || ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
+    if (ssid == nullptr || password == nullptr || ap_ssid == nullptr ||
+        ap_password == nullptr || ap_ssid[0] == '\0') return ESP_ERR_INVALID_ARG;
     if (initialized_.load()) return ESP_OK;
 
-    wifi_config_t wifi_config{};
+    wifi_config_t sta_config{};
+    wifi_config_t ap_config{};
     const size_t ssid_length = std::strlen(ssid);
     const size_t password_length = std::strlen(password);
-    if (ssid_length >= sizeof(wifi_config.sta.ssid) ||
-        password_length >= sizeof(wifi_config.sta.password)) return ESP_ERR_INVALID_SIZE;
+    const size_t ap_ssid_length = std::strlen(ap_ssid);
+    const size_t ap_password_length = std::strlen(ap_password);
+    if (ssid_length >= sizeof(sta_config.sta.ssid) ||
+        password_length >= sizeof(sta_config.sta.password) ||
+        ap_ssid_length >= sizeof(ap_config.ap.ssid) ||
+        ap_password_length >= sizeof(ap_config.ap.password) ||
+        (ap_password_length > 0 && ap_password_length < 8)) return ESP_ERR_INVALID_SIZE;
 
     esp_err_t result = initNvs();
     if (result != ESP_OK) return result;
@@ -38,7 +46,8 @@ esp_err_t WifiDriver::init(const char* ssid, const char* password)
     if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) return result;
 
     netif_ = esp_netif_create_default_wifi_sta();
-    if (netif_ == nullptr) return ESP_FAIL;
+    ap_netif_ = esp_netif_create_default_wifi_ap();
+    if (netif_ == nullptr || ap_netif_ == nullptr) return ESP_FAIL;
 
     wifi_init_config_t init_config = WIFI_INIT_CONFIG_DEFAULT();
     result = esp_wifi_init(&init_config);
@@ -51,19 +60,27 @@ esp_err_t WifiDriver::init(const char* ssid, const char* password)
         &WifiDriver::eventHandler, this, &ip_event_instance_);
     if (result != ESP_OK) return result;
 
-    std::memcpy(wifi_config.sta.ssid, ssid, ssid_length);
-    std::memcpy(wifi_config.sta.password, password, password_length);
-    result = esp_wifi_set_mode(WIFI_MODE_STA);
+    std::memcpy(sta_config.sta.ssid, ssid, ssid_length);
+    std::memcpy(sta_config.sta.password, password, password_length);
+    std::memcpy(ap_config.ap.ssid, ap_ssid, ap_ssid_length);
+    std::memcpy(ap_config.ap.password, ap_password, ap_password_length);
+    ap_config.ap.ssid_len = static_cast<uint8_t>(ap_ssid_length);
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.authmode = ap_password_length == 0 ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+
+    result = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (result != ESP_OK) return result;
     result = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (result != ESP_OK) return result;
-    result = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    if (ssid_length > 0) result = esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+    if (result != ESP_OK) return result;
+    result = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
     if (result != ESP_OK) return result;
     result = esp_wifi_start();
     if (result != ESP_OK) return result;
 
     initialized_.store(true);
-    ESP_LOGI(TAG, "Wi-Fi station initialized");
+    ESP_LOGI(TAG, "Wi-Fi AP+STA initialized; setup SSID=%s", ap_ssid);
     return ESP_OK;
 }
 
