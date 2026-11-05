@@ -1,10 +1,17 @@
 #include "driver/navigation/NavigationSerialDriver.hpp"
 
 #include "config/NavigationSerialConfig.hpp"
+#include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
 namespace minicar::driver {
+namespace {
+
+constexpr char kTag[] = "NavigationUart";
+
+}  // namespace
 
 esp_err_t NavigationSerialDriver::init()
 {
@@ -38,6 +45,14 @@ esp_err_t NavigationSerialDriver::init()
     }
 
     initialized_ = (result == ESP_OK);
+    if (initialized_) {
+        ESP_LOGI(kTag,
+                 "ready: UART%d RX=GPIO%d baud=%d idle_level=%d",
+                 static_cast<int>(UART_PORT),
+                 static_cast<int>(RX_GPIO),
+                 BAUD_RATE,
+                 gpio_get_level(RX_GPIO));
+    }
     return result;
 }
 
@@ -54,6 +69,14 @@ int NavigationSerialDriver::readBytes(std::uint8_t* buffer,
         buffer,
         buffer_size,
         pdMS_TO_TICKS(timeout_ms));
+}
+
+int NavigationSerialDriver::rxLevel() const
+{
+    if (!initialized_) {
+        return -1;
+    }
+    return gpio_get_level(config::navigation_serial::RX_GPIO);
 }
 
 }  // namespace minicar::driver

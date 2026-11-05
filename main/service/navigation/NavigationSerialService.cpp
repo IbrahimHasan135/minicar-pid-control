@@ -36,6 +36,11 @@ int NavigationSerialService::readBytes(std::uint8_t* buffer,
     return driver_.readBytes(buffer, buffer_size, timeout_ms);
 }
 
+int NavigationSerialService::rxLevel() const
+{
+    return initialized_ ? driver_.rxLevel() : -1;
+}
+
 bool NavigationSerialService::parseJsonLine(
     const char* line,
     model::NavigationSample& sample) const

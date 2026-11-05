@@ -16,6 +16,7 @@ public:
     int readBytes(std::uint8_t* buffer,
                   std::size_t buffer_size,
                   std::uint32_t timeout_ms);
+    int rxLevel() const;
     bool parseJsonLine(const char* line, model::NavigationSample& sample) const;
 
 private:

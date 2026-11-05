@@ -80,14 +80,31 @@ void NavigationSerialTask::frameTaskEntry(void* context)
 void NavigationSerialTask::receiveTask()
 {
     std::uint8_t bytes[kReadChunkSize]{};
+    TickType_t last_diagnostic_tick = xTaskGetTickCount();
+    std::uint32_t total_bytes = 0;
+    ESP_LOGI(kTag, "RX task started; waiting for newline-delimited JSON");
     while (true) {
         const int count = navigation_service_.readBytes(
             bytes,
             sizeof(bytes),
             config::navigation_serial::UART_READ_TIMEOUT_MS);
         if (count <= 0) {
+            const TickType_t now = xTaskGetTickCount();
+            if ((now - last_diagnostic_tick) >= pdMS_TO_TICKS(2000)) {
+                ESP_LOGI(kTag,
+                         "waiting: RX GPIO32 level=%d total_bytes=%lu",
+                         navigation_service_.rxLevel(),
+                         static_cast<unsigned long>(total_bytes));
+                last_diagnostic_tick = now;
+            }
             continue;
         }
+
+        total_bytes += static_cast<std::uint32_t>(count);
+        ESP_LOGI(kTag,
+                 "received %d UART bytes (total=%lu)",
+                 count,
+                 static_cast<unsigned long>(total_bytes));
 
         const std::size_t sent = xStreamBufferSend(
             stream_buffer_, bytes, static_cast<std::size_t>(count), 0);
@@ -150,6 +167,7 @@ void NavigationSerialTask::consumeByte(char byte,
     }
 
     frame[frame_length] = '\0';
+    ESP_LOGI(kTag, "raw frame: %s", frame);
     model::NavigationSample sample{};
     if (navigation_service_.parseJsonLine(frame, sample)) {
         char values[4][24]{};

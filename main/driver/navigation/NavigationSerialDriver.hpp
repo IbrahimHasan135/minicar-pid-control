@@ -13,6 +13,7 @@ public:
     int readBytes(std::uint8_t* buffer,
                   std::size_t buffer_size,
                   std::uint32_t timeout_ms);
+    int rxLevel() const;
 
 private:
     bool initialized_{false};
