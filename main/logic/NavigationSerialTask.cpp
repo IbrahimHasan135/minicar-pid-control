@@ -189,6 +189,10 @@ void NavigationSerialTask::consumeByte(char byte,
 void NavigationSerialTask::publishRgbcSample(
     const model::NavigationSample& sample)
 {
+    if (mqtt_rgbc_session_complete_) {
+        return;
+    }
+
     const std::uint32_t elapsed_ms =
         sample.received_at_ms - last_mqtt_publish_ms_;
     if (has_published_mqtt_ &&
@@ -196,17 +200,28 @@ void NavigationSerialTask::publishRgbcSample(
         return;
     }
 
-    char values[4][24]{};
-    for (std::size_t i = 0; i < 4; ++i) {
-        valueToText(sample.values[i], values[i], sizeof(values[i]));
-    }
-
     char payload[160]{};
-    const int payload_length = std::snprintf(
-        payload,
-        sizeof(payload),
-        "{\"value1\":%s,\"value2\":%s,\"value3\":%s,\"value4\":%s}",
-        values[0], values[1], values[2], values[3]);
+    int payload_length = 0;
+    const bool sending_end_marker =
+        mqtt_rgbc_samples_queued_ >=
+        config::navigation_serial::MQTT_RGBC_SAMPLE_LIMIT;
+    if (sending_end_marker) {
+        payload_length = std::snprintf(
+            payload,
+            sizeof(payload),
+            "{\"status\":\"complete\",\"samples_sent\":%u}",
+            static_cast<unsigned>(mqtt_rgbc_samples_queued_));
+    } else {
+        char values[4][24]{};
+        for (std::size_t i = 0; i < 4; ++i) {
+            valueToText(sample.values[i], values[i], sizeof(values[i]));
+        }
+        payload_length = std::snprintf(
+            payload,
+            sizeof(payload),
+            "{\"value1\":%s,\"value2\":%s,\"value3\":%s,\"value4\":%s}",
+            values[0], values[1], values[2], values[3]);
+    }
     if (payload_length <= 0 ||
         static_cast<std::size_t>(payload_length) >= sizeof(payload)) {
         ESP_LOGE(kTag, "RGBC MQTT JSON formatting failed");
@@ -218,8 +233,18 @@ void NavigationSerialTask::publishRgbcSample(
     if (queued) {
         last_mqtt_publish_ms_ = sample.received_at_ms;
         has_published_mqtt_ = true;
-        ESP_LOGI(kTag, "RGBC MQTT queued: topic=%s payload=%s",
-                 config::navigation_serial::MQTT_RGBC_TOPIC, payload);
+        if (sending_end_marker) {
+            mqtt_rgbc_session_complete_ = true;
+            ESP_LOGI(kTag, "RGBC MQTT session complete: payload=%s", payload);
+        } else {
+            ++mqtt_rgbc_samples_queued_;
+            ESP_LOGI(kTag, "RGBC MQTT queued %u/%u: topic=%s payload=%s",
+                     static_cast<unsigned>(mqtt_rgbc_samples_queued_),
+                     static_cast<unsigned>(
+                         config::navigation_serial::MQTT_RGBC_SAMPLE_LIMIT),
+                     config::navigation_serial::MQTT_RGBC_TOPIC,
+                     payload);
+        }
     } else {
         ESP_LOGW(kTag, "RGBC MQTT queue full or unavailable");
     }
