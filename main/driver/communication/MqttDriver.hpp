@@ -23,7 +23,7 @@ public:
 private:
     static void eventHandler(void* handler_argument, esp_event_base_t event_base,
                              int32_t event_id, void* event_data);
-    void handleEvent(int32_t event_id);
+    void handleEvent(int32_t event_id, esp_mqtt_event_handle_t event);
 
     esp_mqtt_client_handle_t client_{nullptr};
     std::atomic<bool> connected_{false};

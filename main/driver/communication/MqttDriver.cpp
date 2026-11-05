@@ -1,5 +1,8 @@
 #include "driver/communication/MqttDriver.hpp"
 
+#include <cstring>
+
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 
 namespace minicar::driver {
@@ -15,6 +18,10 @@ esp_err_t MqttDriver::init(const char* broker_uri, const char* username,
 
     esp_mqtt_client_config_t config{};
     config.broker.address.uri = broker_uri;
+    if (std::strncmp(broker_uri, "mqtts://", 8) == 0 ||
+        std::strncmp(broker_uri, "wss://", 6) == 0) {
+        config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+    }
     if (username != nullptr && username[0] != '\0') config.credentials.username = username;
     if (password != nullptr && password[0] != '\0') config.credentials.authentication.password = password;
     if (client_id != nullptr && client_id[0] != '\0') config.credentials.client_id = client_id;
@@ -90,12 +97,12 @@ void MqttDriver::eventHandler(void* handler_argument, esp_event_base_t event_bas
                               int32_t event_id, void* event_data)
 {
     (void)event_base;
-    (void)event_data;
     auto* self = static_cast<MqttDriver*>(handler_argument);
-    if (self != nullptr) self->handleEvent(event_id);
+    auto* event = static_cast<esp_mqtt_event_handle_t>(event_data);
+    if (self != nullptr) self->handleEvent(event_id, event);
 }
 
-void MqttDriver::handleEvent(int32_t event_id)
+void MqttDriver::handleEvent(int32_t event_id, esp_mqtt_event_handle_t event)
 {
     if (event_id == MQTT_EVENT_BEFORE_CONNECT) {
         connecting_.store(true);
@@ -107,10 +114,26 @@ void MqttDriver::handleEvent(int32_t event_id)
         connected_.store(false);
         connecting_.store(false);
         ESP_LOGW(TAG, "Disconnected from broker");
+    } else if (event_id == MQTT_EVENT_PUBLISHED) {
+        ESP_LOGI(TAG, "Broker acknowledged publish: id=%d",
+                 event != nullptr ? event->msg_id : -1);
+    } else if (event_id == MQTT_EVENT_DELETED) {
+        ESP_LOGW(TAG, "MQTT outbox deleted message: id=%d",
+                 event != nullptr ? event->msg_id : -1);
     } else if (event_id == MQTT_EVENT_ERROR) {
         connected_.store(false);
         connecting_.store(false);
-        ESP_LOGE(TAG, "MQTT transport error");
+        if (event != nullptr && event->error_handle != nullptr) {
+            ESP_LOGE(TAG,
+                     "MQTT error: type=%d connect_rc=%d tls_esp=0x%x tls_stack=0x%x cert_flags=0x%x",
+                     event->error_handle->error_type,
+                     event->error_handle->connect_return_code,
+                     event->error_handle->esp_tls_last_esp_err,
+                     event->error_handle->esp_tls_stack_err,
+                     event->error_handle->esp_tls_cert_verify_flags);
+        } else {
+            ESP_LOGE(TAG, "MQTT transport error without details");
+        }
     }
     // Inbound MQTT_DATA is intentionally not handled in this outbound-only phase.
 }
