@@ -136,17 +136,19 @@ label{display:block;font-weight:650;margin-top:13px}input{width:100%;padding:11p
     appendEscaped(page, settings.mdns_hostname);
     page += R"HTML(.local</div><div class="actions"><button class="primary" onclick="openModal('wifi')">Edit Wi-Fi</button><button class="secondary" onclick="openModal('mqtt')">Edit MQTT</button><button class="secondary" onclick="openModal('mdns')">Edit mDNS</button></div></main>
 <section id="wifi" class="modal"><form class="dialog" method="post" action="/save-wifi"><div class="dialog-head"><h2>Edit Wi-Fi</h2><button type="button" class="close" onclick="closeModal('wifi')">Tutup</button></div><label>Wi-Fi SSID</label><input name="wifi_ssid" maxlength="32" required value=")HTML";
-    page += '"'; appendEscaped(page, settings.wifi_ssid); page += R"HTML("><label>Wi-Fi Password</label><div class="password"><input id="wifiPass" name="wifi_password" type="password" maxlength="64" value=")HTML";
-    page += '"'; appendEscaped(page, settings.wifi_password); page += R"HTML("><button type="button" onclick="togglePassword('wifiPass',this)">Lihat</button></div><button class="save" type="submit">Simpan Wi-Fi</button></form></section>
+    appendEscaped(page, settings.wifi_ssid); page += R"HTML("><label>Wi-Fi Password</label><div class="password"><input id="wifiPass" name="wifi_password" type="password" maxlength="64" value=")HTML";
+    appendEscaped(page, settings.wifi_password); page += R"HTML("><button type="button" onclick="togglePassword('wifiPass',this)">Lihat</button></div><button class="save" type="submit">Simpan Wi-Fi</button></form></section>
 <section id="mqtt" class="modal"><form class="dialog" method="post" action="/save-mqtt"><div class="dialog-head"><h2>Edit MQTT</h2><button type="button" class="close" onclick="closeModal('mqtt')">Tutup</button></div><label>Broker URI</label><input name="mqtt_uri" maxlength="159" required value=")HTML";
-    page += '"'; appendEscaped(page, settings.mqtt_uri); page += R"HTML("><label>Username</label><input name="mqtt_username" maxlength="95" value=")HTML";
-    page += '"'; appendEscaped(page, settings.mqtt_username); page += R"HTML("><label>Password</label><div class="password"><input id="mqttPass" name="mqtt_password" type="password" maxlength="127" value=")HTML";
-    page += '"'; appendEscaped(page, settings.mqtt_password); page += R"HTML("><button type="button" onclick="togglePassword('mqttPass',this)">Lihat</button></div><label>Client ID</label><input name="mqtt_client_id" maxlength="63" value=")HTML";
-    page += '"'; appendEscaped(page, settings.mqtt_client_id); page += R"HTML("><button class="save" type="submit">Simpan MQTT</button></form></section>
+    appendEscaped(page, settings.mqtt_uri); page += R"HTML("><label>Username</label><input name="mqtt_username" maxlength="95" value=")HTML";
+    appendEscaped(page, settings.mqtt_username); page += R"HTML("><label>Password</label><div class="password"><input id="mqttPass" name="mqtt_password" type="password" maxlength="127" value=")HTML";
+    appendEscaped(page, settings.mqtt_password); page += R"HTML("><button type="button" onclick="togglePassword('mqttPass',this)">Lihat</button></div><label>Client ID</label><input name="mqtt_client_id" maxlength="63" value=")HTML";
+    appendEscaped(page, settings.mqtt_client_id); page += R"HTML("><button class="save" type="submit">Simpan MQTT</button></form></section>
 <section id="mdns" class="modal"><form class="dialog" method="post" action="/save-mdns"><div class="dialog-head"><h2>Edit mDNS</h2><button type="button" class="close" onclick="closeModal('mdns')">Tutup</button></div><label>mDNS Hostname</label><input name="mdns_hostname" maxlength="63" required value=")HTML";
-    page += '"'; appendEscaped(page, settings.mdns_hostname); page += R"HTML("><button class="save" type="submit">Simpan mDNS</button></form></section>
+    appendEscaped(page, settings.mdns_hostname); page += R"HTML("><button class="save" type="submit">Simpan mDNS</button></form></section>
 <script>function openModal(id){document.getElementById(id).classList.add('open')}function closeModal(id){document.getElementById(id).classList.remove('open')}function togglePassword(id,b){const i=document.getElementById(id),s=i.type==='password';i.type=s?'text':'password';b.textContent=s?'Sembunyikan':'Lihat'}document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('open')}));</script></body></html>)HTML";
     httpd_resp_set_type(request, "text/html");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store, no-cache, must-revalidate");
+    httpd_resp_set_hdr(request, "Pragma", "no-cache");
     return httpd_resp_send(request, page.c_str(), static_cast<ssize_t>(page.size()));
 }
 
