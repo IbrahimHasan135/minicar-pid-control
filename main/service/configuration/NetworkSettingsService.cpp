@@ -56,12 +56,6 @@ esp_err_t NetworkSettingsService::init()
     result = nvs_open(NAMESPACE, NVS_READONLY, &handle);
     if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
     if (result != ESP_OK) return result;
-    std::uint8_t configured = 0;
-    if (nvs_get_u8(handle, "configured", &configured) != ESP_OK || configured != 1) {
-        nvs_close(handle);
-        return ESP_OK;
-    }
-
     readText(handle, "wifi_ssid", settings_.wifi_ssid, sizeof(settings_.wifi_ssid), settings_.wifi_ssid);
     readText(handle, "wifi_pass", settings_.wifi_password, sizeof(settings_.wifi_password), settings_.wifi_password);
     readText(handle, "mqtt_uri", settings_.mqtt_uri, sizeof(settings_.mqtt_uri), settings_.mqtt_uri);
@@ -91,7 +85,6 @@ esp_err_t NetworkSettingsService::save(const model::NetworkSettings& settings)
         result = writeText(handle, entry.key, entry.value);
         if (result != ESP_OK) break;
     }
-    if (result == ESP_OK) result = nvs_set_u8(handle, "configured", 1);
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
     if (result == ESP_OK) settings_ = settings;
