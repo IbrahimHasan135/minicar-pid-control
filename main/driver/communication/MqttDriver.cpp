@@ -70,7 +70,15 @@ esp_err_t MqttDriver::enqueueJson(const char* topic, const char* payload,
     }
     const int message_id = esp_mqtt_client_enqueue(client_, topic, payload,
         static_cast<int>(payload_length), qos, retain, true);
-    if (message_id >= 0) return ESP_OK;
+    if (message_id >= 0) {
+        ESP_LOGI(TAG,
+                 "Publish accepted: id=%d topic=%s bytes=%u qos=%d",
+                 message_id,
+                 topic,
+                 static_cast<unsigned>(payload_length),
+                 qos);
+        return ESP_OK;
+    }
     if (message_id == -2) return ESP_ERR_NO_MEM;  // Internal MQTT outbox is full.
     return ESP_FAIL;
 }

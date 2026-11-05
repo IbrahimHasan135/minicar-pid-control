@@ -108,6 +108,18 @@ extern "C" void app_main(void)
     const esp_err_t mqtt_queue_result = mqtt_publish_queue.create(
         config::network::MQTT_PUBLISH_QUEUE_LENGTH);
     if (mqtt_queue_result == ESP_OK) {
+        constexpr char kTestTopic[] = "novalynk/minicar/arand/test";
+        constexpr char kTestPayload[] =
+            "{\"test\":\"wifi-mqtt-step4\",\"value1\":51,\"value2\":48,"
+            "\"value3\":46,\"value4\":106}";
+        const bool test_event_queued = mqtt_publish_queue.pushJson(
+            kTestTopic, kTestPayload, 0);
+        ESP_LOGI(TAG,
+                 "MQTT test event %s: topic=%s payload=%s",
+                 test_event_queued ? "queued" : "rejected",
+                 kTestTopic,
+                 kTestPayload);
+
         const BaseType_t task_result = wifi_mqtt_task.start();
         if (task_result != pdPASS) ESP_LOGE(TAG, "Wi-Fi/MQTT task creation failed");
     } else {
