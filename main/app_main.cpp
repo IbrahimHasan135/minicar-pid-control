@@ -115,6 +115,8 @@ extern "C" void app_main(void)
     }
     // SerialTask is intentionally disabled until SerialDriver is implemented.
 
-    publishStartupTelemetry(telemetry_queue, "mini car tasks started");
-    (void)application::Mission::enqueueSquareMission(motion_queue);
+    publishStartupTelemetry(
+        telemetry_queue,
+        "Wi-Fi/MQTT step-1 idle test; motor remains stopped");
+    motor_service.stopMotor();
 }

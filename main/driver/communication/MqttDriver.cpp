@@ -24,7 +24,8 @@ esp_err_t MqttDriver::init(const char* broker_uri, const char* username,
     client_ = esp_mqtt_client_init(&config);
     if (client_ == nullptr) return ESP_ERR_NO_MEM;
     const esp_err_t result = esp_mqtt_client_register_event(
-        client_, ESP_EVENT_ANY_ID, &MqttDriver::eventHandler, this);
+        client_, static_cast<esp_mqtt_event_id_t>(ESP_EVENT_ANY_ID),
+        &MqttDriver::eventHandler, this);
     if (result != ESP_OK) {
         esp_mqtt_client_destroy(client_);
         client_ = nullptr;
