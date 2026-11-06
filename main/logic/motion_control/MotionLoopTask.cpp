@@ -281,9 +281,10 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         snapshot.target_heading_deg,
         heading_service_.getHeadingDeg());
 
-    // Stop when the measured heading reaches or crosses the target. Do not
-    // reverse to correct overshoot during this open-loop turn test.
-    if ((turn_direction_ * angle_error_deg) <= 0.0f) {
+    const float remaining_angle_deg = turn_direction_ * angle_error_deg;
+    // Stop slightly before the exact target to account for drivetrain inertia.
+    // Never reverse to correct overshoot during this turn test.
+    if (remaining_angle_deg <= config::robot::TURN_ANGLE_TOLERANCE_DEG) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
@@ -291,11 +292,15 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         return;
     }
 
-    // Deliberately bypass both heading PID and wheel-speed PID for this bench
-    // test. Run both motors at a fixed, opposite PWM until the IMU crosses the
-    // requested heading.
+    // Slow down over the final part of the turn to avoid a large inertial
+    // overshoot while retaining a minimum output that can move the drivetrain.
     (void)dt_s;
-    const float left_output = turn_direction_ * config::robot::OPEN_LOOP_TURN_OUTPUT;
+    const float turn_output = std::clamp(
+        config::robot::OPEN_LOOP_TURN_OUTPUT *
+            (remaining_angle_deg / config::robot::TURN_SLOWDOWN_ANGLE_DEG),
+        config::robot::MIN_TURN_OUTPUT,
+        config::robot::OPEN_LOOP_TURN_OUTPUT);
+    const float left_output = turn_direction_ * turn_output;
     const float right_output = -left_output;
     left_target_mps_ = turn_direction_;
     right_target_mps_ = -turn_direction_;
