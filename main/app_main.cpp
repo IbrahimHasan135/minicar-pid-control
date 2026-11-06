@@ -156,6 +156,9 @@ extern "C" void app_main(void)
 
     publishStartupTelemetry(
         telemetry_queue,
-        "navigation UART and Wi-Fi/MQTT ready; motor remains stopped");
-    motor_service.stopMotor();
+        "initial motor test queued: forward 1 m, right 90 deg, then stop");
+    if (!application::Mission::enqueueInitialTestMission(motion_queue)) {
+        ESP_LOGE(TAG, "failed to enqueue initial motor test mission");
+        motor_service.stopMotor();
+    }
 }

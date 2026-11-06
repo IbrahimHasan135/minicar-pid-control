@@ -4,6 +4,17 @@
 
 namespace minicar::application {
 
+bool Mission::enqueueInitialTestMission(QueueHandle_t motion_queue)
+{
+    constexpr float TEST_DISTANCE_M = 1.0f;
+    constexpr float TEST_SPEED_MPS = 0.2f;
+    constexpr float RIGHT_TURN_DEG = 90.0f;
+
+    return pushMove(motion_queue, TEST_DISTANCE_M, TEST_SPEED_MPS) &&
+           pushTurn(motion_queue, RIGHT_TURN_DEG) &&
+           pushStop(motion_queue);
+}
+
 bool Mission::enqueueDemoMission(QueueHandle_t motion_queue)
 {
     return pushMove(motion_queue, 1.0f, 1.0f) &&
