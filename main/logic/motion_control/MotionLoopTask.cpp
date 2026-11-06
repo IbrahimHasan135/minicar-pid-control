@@ -8,6 +8,11 @@
 #include "config/FreeRTOSConfig.hpp"
 #include "config/PIDConfig.hpp"
 #include "config/RobotConfig.hpp"
+#include "esp_log.h"
+
+namespace {
+constexpr const char* kTag = "MotionLoopTask";
+}
 
 namespace minicar::logic::motion_control {
 
@@ -140,7 +145,11 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
         0.0f,
         config::robot::MAX_LINEAR_SPEED_MPS);
 
-    const float duration_s = std::fabs(command.value) / speed_mps;
+    // Encoder distance is the primary completion condition. Keep a generous
+    // time limit only as a fail-safe for a disconnected/stalled encoder.
+    constexpr float MOVE_TIMEOUT_FACTOR = 2.0f;
+    const float duration_s =
+        (std::fabs(command.value) / speed_mps) * MOVE_TIMEOUT_FACTOR;
     const auto duration_ms = static_cast<uint32_t>(std::ceil(duration_s * 1000.0f));
     move_until_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(std::max<uint32_t>(1U, duration_ms));
 
@@ -231,7 +240,11 @@ void MotionLoopTask::handleWait(const MotionControlSnapshot& snapshot)
 
 void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_s)
 {
-    if (static_cast<int32_t>(xTaskGetTickCount() - move_until_tick_) >= 0) {
+    const float travelled_distance_m = std::fabs(
+        odometry_service_.getTravelledDistanceM() - snapshot.start_distance_m);
+    const float target_distance_m = std::fabs(snapshot.target_distance_m);
+    if (travelled_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M >=
+        target_distance_m) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
@@ -239,11 +252,21 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
         return;
     }
 
+    if (static_cast<int32_t>(xTaskGetTickCount() - move_until_tick_) >= 0) {
+        left_target_mps_ = 0.0f;
+        right_target_mps_ = 0.0f;
+        motor_service_.stopMotor();
+        ESP_LOGW(kTag, "move timeout before encoder target: travelled=%.3f target=%.3f",
+                 static_cast<double>(travelled_distance_m),
+                 static_cast<double>(target_distance_m));
+        context_.setCompleted();
+        return;
+    }
+
     const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
     const float base_speed_mps = direction * snapshot.target_speed_mps;
-    // Do not use odometry or IMU to stop/correct straight movement in this
-    // test. The duration controls completion and the speed controller below
-    // keeps both wheel velocities matched.
+    // Encoder odometry controls distance completion; speed PID keeps the
+    // wheels synchronized while the command is active.
     left_target_mps_ = base_speed_mps;
     right_target_mps_ = base_speed_mps;
     (void)dt_s;

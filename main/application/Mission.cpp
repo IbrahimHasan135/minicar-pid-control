@@ -11,8 +11,7 @@ bool Mission::enqueueInitialTestMission(QueueHandle_t motion_queue)
     constexpr float RIGHT_TURN_DEG = 90.0f;
 
     return pushMove(motion_queue, TEST_DISTANCE_M, TEST_SPEED_MPS) &&
-           pushTurn(motion_queue, RIGHT_TURN_DEG) &&
-           pushStop(motion_queue);
+           pushTurn(motion_queue, RIGHT_TURN_DEG);
 }
 
 bool Mission::enqueueDemoMission(QueueHandle_t motion_queue)
