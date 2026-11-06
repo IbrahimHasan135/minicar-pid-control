@@ -8,8 +8,9 @@ enum class SpeedMaster {
     RIGHT,
 };
 
-constexpr float SPEED_KP = 2.3f;
-constexpr float SPEED_KI = 1.1f;
+// Conservative high-response baseline for the 200 Hz motor control loop.
+constexpr float SPEED_KP = 2.8f;
+constexpr float SPEED_KI = 1.4f;
 constexpr float SPEED_KD = 0.0f;
 constexpr float SPEED_FEED_FORWARD = 1.55f;
 constexpr float SPEED_FEEDBACK_FILTER_ALPHA = 0.35f;
