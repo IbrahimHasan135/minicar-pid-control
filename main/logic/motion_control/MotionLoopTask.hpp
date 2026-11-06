@@ -25,6 +25,12 @@ public:
     BaseType_t start();
 
 private:
+    enum class StraightHeadingCorrection {
+        NONE,
+        SPEED_UP_RIGHT,
+        SLOW_DOWN_RIGHT,
+    };
+
     static void taskEntry(void* task_context);
     void run();
     void step(float dt_s);
@@ -62,6 +68,8 @@ private:
     float previous_left_output_{0.0f};
     float previous_right_output_{0.0f};
     bool feedback_filter_initialized_{false};
+    StraightHeadingCorrection straight_heading_correction_{
+        StraightHeadingCorrection::NONE};
     TickType_t last_telemetry_tick_{0};
     TickType_t move_until_tick_{0};
     TickType_t wait_until_tick_{0};

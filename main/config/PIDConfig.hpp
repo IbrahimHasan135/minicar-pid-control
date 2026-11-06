@@ -15,9 +15,9 @@ constexpr float SPEED_KD = 0.0f;
 constexpr float SPEED_FEED_FORWARD = 1.55f;
 constexpr float SPEED_FEEDBACK_FILTER_ALPHA = 0.35f;
 constexpr float SPEED_OUTPUT_SLEW_RATE = 2.5f;
-// Keep both wheel loops independent so heading correction can adjust their
-// targets in opposite directions while driving straight.
-constexpr SpeedMaster SPEED_MASTER = SpeedMaster::INDEPENDENT;
+// Left wheel is the speed master; the right wheel normally follows its
+// measured speed and is temporarily trimmed by the IMU heading supervisor.
+constexpr SpeedMaster SPEED_MASTER = SpeedMaster::LEFT;
 
 constexpr float HEADING_KP = 0.02f;
 constexpr float HEADING_KI = 0.0f;

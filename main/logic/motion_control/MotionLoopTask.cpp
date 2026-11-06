@@ -138,6 +138,7 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
+    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     heading_service_.resetController();
 
     const float speed_mps = std::clamp(
@@ -268,17 +269,11 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
 
     const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
     const float base_speed_mps = direction * snapshot.target_speed_mps;
-    const float raw_heading_correction = heading_service_.calculateHeadingCorrection(
-        snapshot.target_heading_deg, dt_s);
-    const float heading_correction = std::clamp(
-        raw_heading_correction,
-        -config::robot::MAX_STRAIGHT_HEADING_CORRECTION_MPS,
-        config::robot::MAX_STRAIGHT_HEADING_CORRECTION_MPS);
-    // Encoder odometry controls distance completion; speed PID keeps the
-    // individual wheels on target, while IMU heading feedback trims the two
-    // targets in opposite directions to reject mechanical steering drift.
-    left_target_mps_ = base_speed_mps + heading_correction;
-    right_target_mps_ = base_speed_mps - heading_correction;
+    // The left wheel remains the speed master. IMU supervision of the right
+    // follower is applied later, after the master speed has been measured.
+    left_target_mps_ = base_speed_mps;
+    right_target_mps_ = base_speed_mps;
+    (void)dt_s;
 }
 
 void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_s)
@@ -327,6 +322,7 @@ void MotionLoopTask::stopAndIdle()
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
+    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     context_.setIdle();
 }
 
@@ -339,6 +335,7 @@ void MotionLoopTask::failSafeStop()
     right_speed_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     context_.setError();
 }
 
@@ -376,6 +373,53 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     if (context_.snapshot().state == model::MotionState::MOVING) {
         if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
             right_pid_target_mps = filtered_left_speed_mps_;
+
+            // Positive drift means the car has veered right: speed up the
+            // right follower until the heading crosses the original heading.
+            // Negative drift does the inverse. The latch prevents rapid
+            // direction changes before the original heading is recovered.
+            const MotionControlSnapshot snapshot = context_.snapshot();
+            const float heading_drift_deg =
+                service::HeadingService::shortestAngleErrorDeg(
+                    heading_service_.getHeadingDeg(),
+                    snapshot.target_heading_deg);
+
+            if (straight_heading_correction_ == StraightHeadingCorrection::NONE) {
+                if (heading_drift_deg >=
+                    config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                    straight_heading_correction_ =
+                        StraightHeadingCorrection::SPEED_UP_RIGHT;
+                } else if (heading_drift_deg <=
+                           -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                    straight_heading_correction_ =
+                        StraightHeadingCorrection::SLOW_DOWN_RIGHT;
+                }
+            } else if (
+                straight_heading_correction_ ==
+                    StraightHeadingCorrection::SPEED_UP_RIGHT &&
+                heading_drift_deg <= 0.0f) {
+                straight_heading_correction_ = StraightHeadingCorrection::NONE;
+            } else if (
+                straight_heading_correction_ ==
+                    StraightHeadingCorrection::SLOW_DOWN_RIGHT &&
+                heading_drift_deg >= 0.0f) {
+                straight_heading_correction_ = StraightHeadingCorrection::NONE;
+            }
+
+            if (straight_heading_correction_ ==
+                StraightHeadingCorrection::SPEED_UP_RIGHT) {
+                right_pid_target_mps +=
+                    config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS;
+            } else if (straight_heading_correction_ ==
+                       StraightHeadingCorrection::SLOW_DOWN_RIGHT) {
+                right_pid_target_mps -=
+                    config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS;
+            }
+
+            right_pid_target_mps = std::clamp(
+                right_pid_target_mps,
+                0.0f,
+                config::robot::MAX_WHEEL_SPEED_MPS);
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
         }
