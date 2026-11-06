@@ -268,11 +268,17 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
 
     const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
     const float base_speed_mps = direction * snapshot.target_speed_mps;
+    const float raw_heading_correction = heading_service_.calculateHeadingCorrection(
+        snapshot.target_heading_deg, dt_s);
+    const float heading_correction = std::clamp(
+        raw_heading_correction,
+        -config::robot::MAX_STRAIGHT_HEADING_CORRECTION_MPS,
+        config::robot::MAX_STRAIGHT_HEADING_CORRECTION_MPS);
     // Encoder odometry controls distance completion; speed PID keeps the
-    // wheels synchronized while the command is active.
-    left_target_mps_ = base_speed_mps;
-    right_target_mps_ = base_speed_mps;
-    (void)dt_s;
+    // individual wheels on target, while IMU heading feedback trims the two
+    // targets in opposite directions to reject mechanical steering drift.
+    left_target_mps_ = base_speed_mps + heading_correction;
+    right_target_mps_ = base_speed_mps - heading_correction;
 }
 
 void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_s)

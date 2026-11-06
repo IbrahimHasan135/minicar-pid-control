@@ -10,6 +10,7 @@ constexpr int ENCODER_TICKS_PER_REV = 1766;
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
+constexpr float MAX_STRAIGHT_HEADING_CORRECTION_MPS = 0.08f;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
 constexpr float MIN_TURN_OUTPUT = 0.12f;
 constexpr float TURN_SLOWDOWN_ANGLE_DEG = 35.0f;

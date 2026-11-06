@@ -15,9 +15,9 @@ constexpr float SPEED_KD = 0.0f;
 constexpr float SPEED_FEED_FORWARD = 1.55f;
 constexpr float SPEED_FEEDBACK_FILTER_ALPHA = 0.35f;
 constexpr float SPEED_OUTPUT_SLEW_RATE = 2.5f;
-// Select the wheel with the more repeatable mechanical response as master.
-// Change to RIGHT when the right motor is the better reference on another build.
-constexpr SpeedMaster SPEED_MASTER = SpeedMaster::LEFT;
+// Keep both wheel loops independent so heading correction can adjust their
+// targets in opposite directions while driving straight.
+constexpr SpeedMaster SPEED_MASTER = SpeedMaster::INDEPENDENT;
 
 constexpr float HEADING_KP = 0.02f;
 constexpr float HEADING_KI = 0.0f;
