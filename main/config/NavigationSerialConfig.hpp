@@ -18,6 +18,7 @@ constexpr std::size_t MAX_FRAME_LENGTH = 128;
 constexpr std::uint32_t UART_READ_TIMEOUT_MS = 20;
 constexpr std::uint32_t MQTT_PUBLISH_PERIOD_MS = 5000;
 constexpr std::uint8_t MQTT_RGBC_SAMPLE_LIMIT = 5;
-constexpr char MQTT_RGBC_TOPIC[] = "novalynk/minicar/arand/rgbc";
+// Shared topic for the interchangeable RGBC and RF serial navigation nodes.
+constexpr char MQTT_RGBC_TOPIC[] = "serial-communication/rgbc-rf";
 
 }  // namespace minicar::config::navigation_serial
