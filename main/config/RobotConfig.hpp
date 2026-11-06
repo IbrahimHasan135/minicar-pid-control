@@ -5,7 +5,7 @@ namespace minicar::config::robot {
 constexpr float WHEEL_DIAMETER_M = 0.064f;
 constexpr float WHEEL_BASE_M = 0.145f;
 // Must match the quadrature count used by MotorEncoderDriver.
-constexpr int ENCODER_TICKS_PER_REV = 1738;
+constexpr int ENCODER_TICKS_PER_REV = 1766;
 
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
