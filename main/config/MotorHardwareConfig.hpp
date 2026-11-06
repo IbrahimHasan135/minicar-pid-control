@@ -40,7 +40,8 @@ constexpr MotorPeripheralConfig RIGHT_MOTOR{
 
 // Quadrature x4 estimate: 11 pulses/motor revolution * gearbox ratio 34 * 4.
 // Calibrate this value by rotating the output shaft exactly one revolution.
-constexpr float ENCODER_COUNTS_PER_OUTPUT_REV = 1496.0f;
+// Field-calibrated from a 0.93 m measured run against a 1.00 m command.
+constexpr float ENCODER_COUNTS_PER_OUTPUT_REV = 1576.0f;
 constexpr float WHEEL_DIAMETER_M = 0.064f;
 
 // ESP32 low-speed LEDC can remain stuck waiting for duty_start to clear.
