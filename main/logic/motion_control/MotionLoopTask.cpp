@@ -248,6 +248,9 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
+        ESP_LOGI(kTag, "encoder distance target reached: travelled=%.3f target=%.3f",
+                 static_cast<double>(travelled_distance_m),
+                 static_cast<double>(target_distance_m));
         context_.setCompleted();
         return;
     }
