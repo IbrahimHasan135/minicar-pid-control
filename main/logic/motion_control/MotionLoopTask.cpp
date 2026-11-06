@@ -51,10 +51,12 @@ void MotionLoopTask::run()
 {
     TickType_t last_wake_tick = xTaskGetTickCount();
     last_telemetry_tick_ = last_wake_tick;
+    const TickType_t control_period_ticks = std::max<TickType_t>(
+        1, pdMS_TO_TICKS(config::rtos::CONTROL_PERIOD_MS));
 
     while (true) {
         step(config::rtos::CONTROL_PERIOD_S);
-        vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(config::rtos::CONTROL_PERIOD_MS));
+        vTaskDelayUntil(&last_wake_tick, control_period_ticks);
     }
 }
 
