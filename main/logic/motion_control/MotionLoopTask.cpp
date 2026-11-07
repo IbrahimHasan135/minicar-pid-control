@@ -380,8 +380,9 @@ void MotionLoopTask::applySpeedControl(float dt_s)
             // The measured hardware convention is:
             //   negative drift -> speed up the right follower
             //   positive drift -> slow down the right follower
-            // Keep the correction latched until the heading reaches/crosses
-            // the original heading. This is a discrete supervisor, not a
+            // Release the main correction shortly before zero. If momentum
+            // carries the car across zero, apply a much smaller correction in
+            // the opposite direction. This is a discrete supervisor, not a
             // heading PID.
             const MotionControlSnapshot snapshot = context_.snapshot();
             const float heading_drift_deg =
@@ -390,7 +391,7 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     snapshot.target_heading_deg);
 
             if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
-                bool correction_completed = false;
+                bool reset_right_pid = false;
                 if (straight_heading_correction_ ==
                     StraightHeadingCorrection::NONE) {
                     if (heading_drift_deg >=
@@ -405,17 +406,61 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                 } else if (
                     straight_heading_correction_ ==
                         StraightHeadingCorrection::SPEED_UP_RIGHT &&
-                    heading_drift_deg >= 0.0f) {
+                    heading_drift_deg >=
+                        -config::robot::STRAIGHT_HEADING_RELEASE_DEG) {
                     straight_heading_correction_ =
-                        StraightHeadingCorrection::NONE;
-                    correction_completed = true;
+                        StraightHeadingCorrection::COAST_AFTER_SPEED_UP;
+                    reset_right_pid = true;
                 } else if (
                     straight_heading_correction_ ==
                         StraightHeadingCorrection::SLOW_DOWN_RIGHT &&
-                    heading_drift_deg <= 0.0f) {
+                    heading_drift_deg <=
+                        config::robot::STRAIGHT_HEADING_RELEASE_DEG) {
+                    straight_heading_correction_ =
+                        StraightHeadingCorrection::COAST_AFTER_SLOW_DOWN;
+                    reset_right_pid = true;
+                } else if (
+                    straight_heading_correction_ ==
+                        StraightHeadingCorrection::COAST_AFTER_SPEED_UP) {
+                    if (heading_drift_deg >=
+                        config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                        straight_heading_correction_ =
+                            StraightHeadingCorrection::COUNTER_SLOW_DOWN_RIGHT;
+                        reset_right_pid = true;
+                    } else if (heading_drift_deg <=
+                               -config::robot::STRAIGHT_HEADING_REENGAGE_DEG) {
+                        straight_heading_correction_ =
+                            StraightHeadingCorrection::SPEED_UP_RIGHT;
+                    }
+                } else if (
+                    straight_heading_correction_ ==
+                        StraightHeadingCorrection::COAST_AFTER_SLOW_DOWN) {
+                    if (heading_drift_deg <=
+                        -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                        straight_heading_correction_ =
+                            StraightHeadingCorrection::COUNTER_SPEED_UP_RIGHT;
+                        reset_right_pid = true;
+                    } else if (heading_drift_deg >=
+                               config::robot::STRAIGHT_HEADING_REENGAGE_DEG) {
+                        straight_heading_correction_ =
+                            StraightHeadingCorrection::SLOW_DOWN_RIGHT;
+                    }
+                } else if (
+                    straight_heading_correction_ ==
+                        StraightHeadingCorrection::COUNTER_SPEED_UP_RIGHT &&
+                    heading_drift_deg >=
+                        -config::robot::STRAIGHT_HEADING_RELEASE_DEG) {
                     straight_heading_correction_ =
                         StraightHeadingCorrection::NONE;
-                    correction_completed = true;
+                    reset_right_pid = true;
+                } else if (
+                    straight_heading_correction_ ==
+                        StraightHeadingCorrection::COUNTER_SLOW_DOWN_RIGHT &&
+                    heading_drift_deg <=
+                        config::robot::STRAIGHT_HEADING_RELEASE_DEG) {
+                    straight_heading_correction_ =
+                        StraightHeadingCorrection::NONE;
+                    reset_right_pid = true;
                 }
 
                 const float right_wheel_trim_mps =
@@ -429,11 +474,19 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                 } else if (straight_heading_correction_ ==
                            StraightHeadingCorrection::SLOW_DOWN_RIGHT) {
                     right_pid_target_mps -= right_wheel_trim_mps;
+                } else if (straight_heading_correction_ ==
+                           StraightHeadingCorrection::COUNTER_SPEED_UP_RIGHT) {
+                    right_pid_target_mps +=
+                        config::robot::STRAIGHT_RIGHT_WHEEL_COUNTER_TRIM_MPS;
+                } else if (straight_heading_correction_ ==
+                           StraightHeadingCorrection::COUNTER_SLOW_DOWN_RIGHT) {
+                    right_pid_target_mps -=
+                        config::robot::STRAIGHT_RIGHT_WHEEL_COUNTER_TRIM_MPS;
                 }
 
-                if (correction_completed) {
-                    // Discard integral accumulated during the temporary trim
-                    // so the follower does not steer past zero error.
+                if (reset_right_pid) {
+                    // Discard integral accumulated by the previous phase so
+                    // it cannot keep steering after the phase has ended.
                     right_speed_pid_.reset();
                 }
 

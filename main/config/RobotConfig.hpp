@@ -10,8 +10,11 @@ constexpr int ENCODER_TICKS_PER_REV = 1766;
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
-constexpr float STRAIGHT_HEADING_TRIGGER_DEG = 2.0f;
+constexpr float STRAIGHT_HEADING_TRIGGER_DEG = 4.0f;
+constexpr float STRAIGHT_HEADING_RELEASE_DEG = 2.0f;
+constexpr float STRAIGHT_HEADING_REENGAGE_DEG = 6.0f;
 constexpr float STRAIGHT_HEADING_LARGE_ERROR_DEG = 10.0f;
+constexpr float STRAIGHT_RIGHT_WHEEL_COUNTER_TRIM_MPS = 0.015f;
 constexpr float STRAIGHT_RIGHT_WHEEL_FINE_TRIM_MPS = 0.03f;
 constexpr float STRAIGHT_RIGHT_WHEEL_TRIM_MPS = 0.06f;
 // IMU is a discrete supervisor, not a heading PID. It temporarily trims the
