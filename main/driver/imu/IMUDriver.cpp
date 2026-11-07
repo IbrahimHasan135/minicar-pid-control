@@ -96,9 +96,11 @@ esp_err_t IMUDriver::init()
         result = writeRegister(accelerometer_, CTRL_REG4_A, 0x88);
     }
 
-    // Magnetometer: 75 Hz, +/-1.3 gauss, continuous-conversion mode.
+    // Magnetometer: 220 Hz, +/-1.3 gauss, continuous-conversion mode.
+    // This matches the 200 Hz control loop closely enough to stop immediately
+    // after the measured heading reaches or crosses the turn target.
     if (result == ESP_OK) {
-        result = writeRegister(magnetometer_, CRA_REG_M, 0x18);
+        result = writeRegister(magnetometer_, CRA_REG_M, 0x1C);
     }
     if (result == ESP_OK) {
         result = writeRegister(magnetometer_, CRB_REG_M, 0x20);
@@ -178,6 +180,12 @@ esp_err_t IMUDriver::readHeadingDeg(float& heading_deg) const
     heading_deg = std::atan2(calibrated_y, calibrated_x) * (180.0f / PI);
     if (heading_deg < 0.0f) {
         heading_deg += 360.0f;
+    }
+    heading_deg = std::round(
+        heading_deg / config::imu_hardware::HEADING_QUANTIZATION_DEG) *
+        config::imu_hardware::HEADING_QUANTIZATION_DEG;
+    if (heading_deg >= 360.0f) {
+        heading_deg = 0.0f;
     }
     return ESP_OK;
 }

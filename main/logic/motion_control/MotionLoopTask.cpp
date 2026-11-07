@@ -8,6 +8,11 @@
 #include "config/FreeRTOSConfig.hpp"
 #include "config/PIDConfig.hpp"
 #include "config/RobotConfig.hpp"
+#include "esp_log.h"
+
+namespace {
+constexpr const char* kTag = "MotionLoopTask";
+}
 
 namespace minicar::logic::motion_control {
 
@@ -16,12 +21,14 @@ MotionLoopTask::MotionLoopTask(
     service::MotorControlService& motor_service,
     service::HeadingService& heading_service,
     service::OdometryService& odometry_service,
-    QueueHandle_t telemetry_queue)
+    QueueHandle_t telemetry_queue,
+    logic::MqttPublishEventQueue& mqtt_publish_queue)
     : context_(context),
       motor_service_(motor_service),
       heading_service_(heading_service),
       odometry_service_(odometry_service),
       telemetry_queue_(telemetry_queue),
+      mqtt_publish_queue_(mqtt_publish_queue),
       left_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
       right_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD)
 {
@@ -51,10 +58,12 @@ void MotionLoopTask::run()
 {
     TickType_t last_wake_tick = xTaskGetTickCount();
     last_telemetry_tick_ = last_wake_tick;
+    const TickType_t control_period_ticks = std::max<TickType_t>(
+        1, pdMS_TO_TICKS(config::rtos::CONTROL_PERIOD_MS));
 
     while (true) {
         step(config::rtos::CONTROL_PERIOD_S);
-        vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(config::rtos::CONTROL_PERIOD_MS));
+        vTaskDelayUntil(&last_wake_tick, control_period_ticks);
     }
 }
 
@@ -82,6 +91,7 @@ void MotionLoopTask::step(float dt_s)
     handleSnapshot(context_.snapshot(), dt_s);
     applySpeedControl(dt_s);
     publishTelemetry();
+    publishImuDiagnostic(context_.snapshot());
 }
 
 void MotionLoopTask::updateServices(float dt_s)
@@ -131,6 +141,7 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
+    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     heading_service_.resetController();
 
     const float speed_mps = std::clamp(
@@ -138,7 +149,11 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
         0.0f,
         config::robot::MAX_LINEAR_SPEED_MPS);
 
-    const float duration_s = std::fabs(command.value) / speed_mps;
+    // Encoder distance is the primary completion condition. Keep a generous
+    // time limit only as a fail-safe for a disconnected/stalled encoder.
+    constexpr float MOVE_TIMEOUT_FACTOR = 2.0f;
+    const float duration_s =
+        (std::fabs(command.value) / speed_mps) * MOVE_TIMEOUT_FACTOR;
     const auto duration_ms = static_cast<uint32_t>(std::ceil(duration_s * 1000.0f));
     move_until_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(std::max<uint32_t>(1U, duration_ms));
 
@@ -229,19 +244,36 @@ void MotionLoopTask::handleWait(const MotionControlSnapshot& snapshot)
 
 void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_s)
 {
+    const float travelled_distance_m = std::fabs(
+        odometry_service_.getTravelledDistanceM() - snapshot.start_distance_m);
+    const float target_distance_m = std::fabs(snapshot.target_distance_m);
+    if (travelled_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M >=
+        target_distance_m) {
+        left_target_mps_ = 0.0f;
+        right_target_mps_ = 0.0f;
+        motor_service_.stopMotor();
+        ESP_LOGI(kTag, "encoder distance target reached: travelled=%.3f target=%.3f",
+                 static_cast<double>(travelled_distance_m),
+                 static_cast<double>(target_distance_m));
+        context_.setCompleted();
+        return;
+    }
+
     if (static_cast<int32_t>(xTaskGetTickCount() - move_until_tick_) >= 0) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
+        ESP_LOGW(kTag, "move timeout before encoder target: travelled=%.3f target=%.3f",
+                 static_cast<double>(travelled_distance_m),
+                 static_cast<double>(target_distance_m));
         context_.setCompleted();
         return;
     }
 
     const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
     const float base_speed_mps = direction * snapshot.target_speed_mps;
-    // Do not use odometry or IMU to stop/correct straight movement in this
-    // test. The duration controls completion and the speed controller below
-    // keeps both wheel velocities matched.
+    // The left wheel remains the speed master. IMU supervision of the right
+    // follower is applied later, after the master speed has been measured.
     left_target_mps_ = base_speed_mps;
     right_target_mps_ = base_speed_mps;
     (void)dt_s;
@@ -253,9 +285,10 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         snapshot.target_heading_deg,
         heading_service_.getHeadingDeg());
 
-    // Stop when the measured heading reaches or crosses the target. Do not
-    // reverse to correct overshoot during this open-loop turn test.
-    if ((turn_direction_ * angle_error_deg) <= 0.0f) {
+    const float remaining_angle_deg = turn_direction_ * angle_error_deg;
+    // Stop slightly before the exact target to account for drivetrain inertia.
+    // Never reverse to correct overshoot during this turn test.
+    if (remaining_angle_deg <= config::robot::TURN_ANGLE_TOLERANCE_DEG) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
@@ -263,11 +296,15 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
         return;
     }
 
-    // Deliberately bypass both heading PID and wheel-speed PID for this bench
-    // test. Run both motors at a fixed, opposite PWM until the IMU crosses the
-    // requested heading.
+    // Slow down over the final part of the turn to avoid a large inertial
+    // overshoot while retaining a minimum output that can move the drivetrain.
     (void)dt_s;
-    const float left_output = turn_direction_ * config::robot::OPEN_LOOP_TURN_OUTPUT;
+    const float turn_output = std::clamp(
+        config::robot::OPEN_LOOP_TURN_OUTPUT *
+            (remaining_angle_deg / config::robot::TURN_SLOWDOWN_ANGLE_DEG),
+        config::robot::MIN_TURN_OUTPUT,
+        config::robot::OPEN_LOOP_TURN_OUTPUT);
+    const float left_output = turn_direction_ * turn_output;
     const float right_output = -left_output;
     left_target_mps_ = turn_direction_;
     right_target_mps_ = -turn_direction_;
@@ -288,6 +325,7 @@ void MotionLoopTask::stopAndIdle()
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
+    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     context_.setIdle();
 }
 
@@ -300,6 +338,7 @@ void MotionLoopTask::failSafeStop()
     right_speed_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     context_.setError();
 }
 
@@ -337,6 +376,56 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     if (context_.snapshot().state == model::MotionState::MOVING) {
         if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
             right_pid_target_mps = filtered_left_speed_mps_;
+
+            // The measured hardware convention is:
+            //   negative drift -> speed up the right follower
+            //   positive drift -> slow down the right follower
+            // Stateless, tiered heading correction. Large errors receive a
+            // strong trim, medium errors a gentle trim, and errors inside the
+            // deadband receive no IMU trim. This is not a heading PID.
+            const MotionControlSnapshot snapshot = context_.snapshot();
+            const float heading_drift_deg =
+                service::HeadingService::shortestAngleErrorDeg(
+                    heading_service_.getHeadingDeg(),
+                    snapshot.target_heading_deg);
+
+            if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
+                StraightHeadingCorrection requested_correction =
+                    StraightHeadingCorrection::NONE;
+                if (heading_drift_deg <=
+                    -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                    requested_correction =
+                        StraightHeadingCorrection::SPEED_UP_RIGHT;
+                } else if (heading_drift_deg >=
+                           config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                    requested_correction =
+                        StraightHeadingCorrection::SLOW_DOWN_RIGHT;
+                }
+
+                if (requested_correction != straight_heading_correction_) {
+                    // Remove integral left by the previous correction mode.
+                    right_speed_pid_.reset();
+                    straight_heading_correction_ = requested_correction;
+                }
+
+                const float right_wheel_trim_mps =
+                    std::fabs(heading_drift_deg) >=
+                            config::robot::STRAIGHT_HEADING_LARGE_ERROR_DEG
+                        ? config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS
+                        : config::robot::STRAIGHT_RIGHT_WHEEL_FINE_TRIM_MPS;
+                if (straight_heading_correction_ ==
+                    StraightHeadingCorrection::SPEED_UP_RIGHT) {
+                    right_pid_target_mps += right_wheel_trim_mps;
+                } else if (straight_heading_correction_ ==
+                           StraightHeadingCorrection::SLOW_DOWN_RIGHT) {
+                    right_pid_target_mps -= right_wheel_trim_mps;
+                }
+
+                right_pid_target_mps = std::clamp(
+                    right_pid_target_mps,
+                    0.0f,
+                    config::robot::MAX_WHEEL_SPEED_MPS);
+            }
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
         }
@@ -391,6 +480,49 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(odometry_service_.getTravelledDistanceM()));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();
+}
+
+void MotionLoopTask::publishImuDiagnostic(
+    const MotionControlSnapshot& snapshot)
+{
+    constexpr uint32_t MQTT_PERIOD_MS = 100;
+    constexpr char MQTT_TOPIC[] = "diagnostic/imu/heading";
+
+    if (snapshot.state != model::MotionState::MOVING) {
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    if (last_imu_mqtt_tick_ != 0 &&
+        (now - last_imu_mqtt_tick_) < pdMS_TO_TICKS(MQTT_PERIOD_MS)) {
+        return;
+    }
+
+    const float initial_heading_deg = snapshot.target_heading_deg;
+    const float current_heading_deg = heading_service_.getHeadingDeg();
+    const float delta_heading_deg =
+        service::HeadingService::shortestAngleErrorDeg(
+            current_heading_deg, initial_heading_deg);
+    const int initial_heading = static_cast<int>(std::lround(initial_heading_deg));
+    const int current_heading = static_cast<int>(std::lround(current_heading_deg));
+    const int delta_heading = static_cast<int>(std::lround(delta_heading_deg));
+
+    char payload[160]{};
+    const int length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"imu_initial_deg\":%d,\"imu_current_deg\":%d,\"imu_delta_deg\":%d}",
+        initial_heading,
+        current_heading,
+        delta_heading);
+    if (length <= 0 || static_cast<size_t>(length) >= sizeof(payload)) {
+        return;
+    }
+
+    if (mqtt_publish_queue_.pushJson(MQTT_TOPIC, payload, 0)) {
+        last_imu_mqtt_tick_ = now;
+        ESP_LOGI(kTag, "IMU MQTT queued: %s", payload);
+    }
 }
 
 bool MotionLoopTask::servicesReady() const

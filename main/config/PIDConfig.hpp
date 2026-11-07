@@ -8,14 +8,15 @@ enum class SpeedMaster {
     RIGHT,
 };
 
-constexpr float SPEED_KP = 2.3f;
-constexpr float SPEED_KI = 1.1f;
+// Conservative high-response baseline for the 200 Hz motor control loop.
+constexpr float SPEED_KP = 2.8f;
+constexpr float SPEED_KI = 1.4f;
 constexpr float SPEED_KD = 0.0f;
 constexpr float SPEED_FEED_FORWARD = 1.55f;
 constexpr float SPEED_FEEDBACK_FILTER_ALPHA = 0.35f;
 constexpr float SPEED_OUTPUT_SLEW_RATE = 2.5f;
-// Select the wheel with the more repeatable mechanical response as master.
-// Change to RIGHT when the right motor is the better reference on another build.
+// Left wheel is the speed master; the right wheel normally follows its
+// measured speed and is temporarily trimmed by the IMU heading supervisor.
 constexpr SpeedMaster SPEED_MASTER = SpeedMaster::LEFT;
 
 constexpr float HEADING_KP = 0.02f;
