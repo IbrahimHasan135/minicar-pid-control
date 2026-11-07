@@ -1,7 +1,6 @@
 #include <cstdint>
 #include <cstdio>
 
-#include "application/Mission.hpp"
 #include "config/FreeRTOSConfig.hpp"
 #include "config/MotorHardwareConfig.hpp"
 #include "config/NetworkConfig.hpp"
@@ -22,10 +21,6 @@
 #include "logic/NavigationSerialTask.hpp"
 #include "logic/communication/MqttPublishEventQueue.hpp"
 #include "logic/communication/WifiMqttTask.hpp"
-#include "logic/motion_control/MotionCommandTask.hpp"
-#include "logic/motion_control/MotionControlContext.hpp"
-#include "logic/motion_control/MotionLoopTask.hpp"
-#include "model/MotionCommand.hpp"
 #include "model/TelemetryMessage.hpp"
 #include "service/heading/HeadingService.hpp"
 #include "service/communication/MqttCommunicationService.hpp"
@@ -86,17 +81,12 @@ extern "C" void app_main(void)
         network_settings.mqtt_username, network_settings.mqtt_password,
         network_settings.mqtt_client_id, config::network::MQTT_PUBLISH_QOS);
 
-    static logic::motion_control::MotionControlContext motion_context;
-
-    static QueueHandle_t motion_queue = xQueueCreate(
-        config::rtos::MOTION_QUEUE_LENGTH,
-        sizeof(model::MotionCommand));
     static QueueHandle_t telemetry_queue = xQueueCreate(
         config::rtos::TELEMETRY_QUEUE_LENGTH,
         sizeof(model::TelemetryMessage));
     static logic::MqttPublishEventQueue mqtt_publish_queue;
 
-    if (motion_queue == nullptr || telemetry_queue == nullptr) {
+    if (telemetry_queue == nullptr) {
         ESP_LOGE(TAG, "queue creation failed");
         return;
     }
@@ -122,10 +112,6 @@ extern "C" void app_main(void)
     // implemented. Telemetry still uses the ConsoleDriver and its queue.
     ESP_LOGI(TAG, "serial task/service disabled until SerialDriver is implemented");
 
-    static logic::motion_control::MotionCommandTask motion_command_task(motion_queue, motion_context);
-    static logic::motion_control::MotionLoopTask motion_loop_task(
-        motion_context, motor_service, heading_service, odometry_service,
-        telemetry_queue, mqtt_publish_queue);
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
     static logic::NavigationSerialTask navigation_serial_task(
         navigation_serial_service, mqtt_publish_queue);
@@ -137,9 +123,11 @@ extern "C" void app_main(void)
     static logic::WifiMqttTask wifi_mqtt_task(
         mqtt_publish_queue, wifi_service, mqtt_communication_service);
 
+    // Static navigation-data acquisition mode: initialize the motor hardware
+    // into a known safe state, but do not start any motion-control task or
+    // enqueue any movement mission.
+    motor_service.stopMotor();
     (void)telemetry_task.start();
-    (void)motion_loop_task.start();
-    (void)motion_command_task.start();
     const esp_err_t mqtt_queue_result = mqtt_publish_queue.create(
         config::robot::IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH);
     if (mqtt_queue_result == ESP_OK) {
@@ -158,9 +146,5 @@ extern "C" void app_main(void)
 
     publishStartupTelemetry(
         telemetry_queue,
-        "IMU diagnostic queued: forward 3 m with left-master speed control");
-    if (!application::Mission::enqueueImuDiagnosticMission(motion_queue)) {
-        ESP_LOGE(TAG, "failed to enqueue IMU diagnostic mission");
-        motor_service.stopMotor();
-    }
+        "static serial acquisition mode; motor stopped; UART-to-MQTT active");
 }
