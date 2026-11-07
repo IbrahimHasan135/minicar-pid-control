@@ -172,24 +172,23 @@ void NavigationSerialTask::consumeByte(char byte,
     ESP_LOGI(kTag, "raw frame: %s", frame);
     model::NavigationSample sample{};
     if (navigation_service_.parseJsonLine(frame, sample)) {
-        char values[4][24]{};
-        for (std::size_t i = 0; i < 4; ++i) {
-            valueToText(sample.values[i], values[i], sizeof(values[i]));
+        if (sample.type == model::NavigationSampleType::RGBC) {
+            ESP_LOGI(kTag, "valid RGBC serial sample");
+        } else {
+            ESP_LOGI(kTag, "valid RF serial sample: routers=%u",
+                     static_cast<unsigned>(sample.router_count));
         }
-        ESP_LOGI(kTag,
-                 "valid sample: value1=%s value2=%s value3=%s value4=%s",
-                 values[0], values[1], values[2], values[3]);
-        publishRgbcSample(sample);
+        publishNavigationSample(sample);
     } else {
         ESP_LOGW(kTag, "invalid navigation JSON rejected");
     }
     frame_length = 0;
 }
 
-void NavigationSerialTask::publishRgbcSample(
+void NavigationSerialTask::publishNavigationSample(
     const model::NavigationSample& sample)
 {
-    if (mqtt_rgbc_session_complete_) {
+    if (mqtt_session_complete_) {
         return;
     }
 
@@ -200,18 +199,18 @@ void NavigationSerialTask::publishRgbcSample(
         return;
     }
 
-    char payload[160]{};
+    char payload[384]{};
     int payload_length = 0;
     const bool sending_end_marker =
-        mqtt_rgbc_samples_queued_ >=
-        config::navigation_serial::MQTT_RGBC_SAMPLE_LIMIT;
+        mqtt_samples_queued_ >=
+        config::navigation_serial::MQTT_NAVIGATION_SAMPLE_LIMIT;
     if (sending_end_marker) {
         payload_length = std::snprintf(
             payload,
             sizeof(payload),
-            "{\"status\":\"complete\",\"samples_sent\":%u}",
-            static_cast<unsigned>(mqtt_rgbc_samples_queued_));
-    } else {
+            "{\"type\":\"session\",\"status\":\"complete\",\"samples_sent\":%u}",
+            static_cast<unsigned>(mqtt_samples_queued_));
+    } else if (sample.type == model::NavigationSampleType::RGBC) {
         char values[4][24]{};
         for (std::size_t i = 0; i < 4; ++i) {
             valueToText(sample.values[i], values[i], sizeof(values[i]));
@@ -219,34 +218,66 @@ void NavigationSerialTask::publishRgbcSample(
         payload_length = std::snprintf(
             payload,
             sizeof(payload),
-            "{\"value1\":%s,\"value2\":%s,\"value3\":%s,\"value4\":%s}",
+            "{\"type\":\"rgbc\",\"R\":%s,\"G\":%s,\"B\":%s,\"C\":%s}",
             values[0], values[1], values[2], values[3]);
+    } else {
+        payload_length = std::snprintf(
+            payload, sizeof(payload), "{\"type\":\"rf\",\"routers\":[");
+        for (std::uint8_t i = 0;
+             i < sample.router_count && payload_length > 0;
+             ++i) {
+            const int appended = std::snprintf(
+                payload + payload_length,
+                sizeof(payload) - static_cast<std::size_t>(payload_length),
+                "%s{\"short\":%u,\"rssi\":%d}",
+                i == 0 ? "" : ",",
+                static_cast<unsigned>(sample.routers[i].short_address),
+                static_cast<int>(sample.routers[i].rssi));
+            if (appended <= 0 ||
+                appended >= static_cast<int>(sizeof(payload) - payload_length)) {
+                payload_length = -1;
+                break;
+            }
+            payload_length += appended;
+        }
+        if (payload_length > 0) {
+            const int suffix = std::snprintf(
+                payload + payload_length,
+                sizeof(payload) - static_cast<std::size_t>(payload_length),
+                "]}");
+            if (suffix <= 0 ||
+                suffix >= static_cast<int>(sizeof(payload) - payload_length)) {
+                payload_length = -1;
+            } else {
+                payload_length += suffix;
+            }
+        }
     }
     if (payload_length <= 0 ||
         static_cast<std::size_t>(payload_length) >= sizeof(payload)) {
-        ESP_LOGE(kTag, "RGBC MQTT JSON formatting failed");
+        ESP_LOGE(kTag, "navigation MQTT JSON formatting failed");
         return;
     }
 
     const bool queued = mqtt_publish_queue_.pushJson(
-        config::navigation_serial::MQTT_RGBC_TOPIC, payload, 0);
+        config::navigation_serial::MQTT_NAVIGATION_TOPIC, payload, 0);
     if (queued) {
         last_mqtt_publish_ms_ = sample.received_at_ms;
         has_published_mqtt_ = true;
         if (sending_end_marker) {
-            mqtt_rgbc_session_complete_ = true;
-            ESP_LOGI(kTag, "RGBC MQTT session complete: payload=%s", payload);
+            mqtt_session_complete_ = true;
+            ESP_LOGI(kTag, "navigation MQTT session complete: payload=%s", payload);
         } else {
-            ++mqtt_rgbc_samples_queued_;
-            ESP_LOGI(kTag, "RGBC MQTT queued %u/%u: topic=%s payload=%s",
-                     static_cast<unsigned>(mqtt_rgbc_samples_queued_),
+            ++mqtt_samples_queued_;
+            ESP_LOGI(kTag, "navigation MQTT queued %u/%u: topic=%s payload=%s",
+                     static_cast<unsigned>(mqtt_samples_queued_),
                      static_cast<unsigned>(
-                         config::navigation_serial::MQTT_RGBC_SAMPLE_LIMIT),
-                     config::navigation_serial::MQTT_RGBC_TOPIC,
+                         config::navigation_serial::MQTT_NAVIGATION_SAMPLE_LIMIT),
+                     config::navigation_serial::MQTT_NAVIGATION_TOPIC,
                      payload);
         }
     } else {
-        ESP_LOGW(kTag, "RGBC MQTT queue full or unavailable");
+        ESP_LOGW(kTag, "navigation MQTT queue full or unavailable");
     }
 }
 

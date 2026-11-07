@@ -28,15 +28,15 @@ private:
                      char* frame,
                      std::size_t& frame_length,
                      bool& discarding);
-    void publishRgbcSample(const model::NavigationSample& sample);
+    void publishNavigationSample(const model::NavigationSample& sample);
 
     service::NavigationSerialService& navigation_service_;
     MqttPublishEventQueue& mqtt_publish_queue_;
     StreamBufferHandle_t stream_buffer_{nullptr};
     std::uint32_t last_mqtt_publish_ms_{0};
     bool has_published_mqtt_{false};
-    std::uint8_t mqtt_rgbc_samples_queued_{0};
-    bool mqtt_rgbc_session_complete_{false};
+    std::uint8_t mqtt_samples_queued_{0};
+    bool mqtt_session_complete_{false};
 };
 
 }  // namespace minicar::logic
