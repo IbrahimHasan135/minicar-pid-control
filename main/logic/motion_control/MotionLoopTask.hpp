@@ -31,10 +31,6 @@ private:
         NONE,
         SPEED_UP_RIGHT,
         SLOW_DOWN_RIGHT,
-        COAST_AFTER_SPEED_UP,
-        COAST_AFTER_SLOW_DOWN,
-        COUNTER_SPEED_UP_RIGHT,
-        COUNTER_SLOW_DOWN_RIGHT,
     };
 
     static void taskEntry(void* task_context);
