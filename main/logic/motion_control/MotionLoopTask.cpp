@@ -388,42 +388,57 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     snapshot.target_heading_deg);
 
             if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
-            if (straight_heading_correction_ == StraightHeadingCorrection::NONE) {
-                if (heading_drift_deg >=
-                    config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                bool correction_completed = false;
+                if (straight_heading_correction_ ==
+                    StraightHeadingCorrection::NONE) {
+                    if (heading_drift_deg >=
+                        config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                        straight_heading_correction_ =
+                            StraightHeadingCorrection::SPEED_UP_RIGHT;
+                    } else if (heading_drift_deg <=
+                               -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                        straight_heading_correction_ =
+                            StraightHeadingCorrection::SLOW_DOWN_RIGHT;
+                    }
+                } else if (
+                    straight_heading_correction_ ==
+                        StraightHeadingCorrection::SPEED_UP_RIGHT &&
+                    heading_drift_deg <= 0.0f) {
                     straight_heading_correction_ =
-                        StraightHeadingCorrection::SPEED_UP_RIGHT;
-                } else if (heading_drift_deg <=
-                           -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
+                        StraightHeadingCorrection::NONE;
+                    correction_completed = true;
+                } else if (
+                    straight_heading_correction_ ==
+                        StraightHeadingCorrection::SLOW_DOWN_RIGHT &&
+                    heading_drift_deg >= 0.0f) {
                     straight_heading_correction_ =
-                        StraightHeadingCorrection::SLOW_DOWN_RIGHT;
+                        StraightHeadingCorrection::NONE;
+                    correction_completed = true;
                 }
-            } else if (
-                straight_heading_correction_ ==
-                    StraightHeadingCorrection::SPEED_UP_RIGHT &&
-                heading_drift_deg <= 0.0f) {
-                straight_heading_correction_ = StraightHeadingCorrection::NONE;
-            } else if (
-                straight_heading_correction_ ==
-                    StraightHeadingCorrection::SLOW_DOWN_RIGHT &&
-                heading_drift_deg >= 0.0f) {
-                straight_heading_correction_ = StraightHeadingCorrection::NONE;
-            }
 
-            if (straight_heading_correction_ ==
-                StraightHeadingCorrection::SPEED_UP_RIGHT) {
-                right_pid_target_mps +=
-                    config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS;
-            } else if (straight_heading_correction_ ==
-                       StraightHeadingCorrection::SLOW_DOWN_RIGHT) {
-                right_pid_target_mps -=
-                    config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS;
-            }
+                const float right_wheel_trim_mps =
+                    std::fabs(heading_drift_deg) >=
+                            config::robot::STRAIGHT_HEADING_LARGE_ERROR_DEG
+                        ? config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS
+                        : config::robot::STRAIGHT_RIGHT_WHEEL_FINE_TRIM_MPS;
+                if (straight_heading_correction_ ==
+                    StraightHeadingCorrection::SPEED_UP_RIGHT) {
+                    right_pid_target_mps += right_wheel_trim_mps;
+                } else if (straight_heading_correction_ ==
+                           StraightHeadingCorrection::SLOW_DOWN_RIGHT) {
+                    right_pid_target_mps -= right_wheel_trim_mps;
+                }
 
-            right_pid_target_mps = std::clamp(
-                right_pid_target_mps,
-                0.0f,
-                config::robot::MAX_WHEEL_SPEED_MPS);
+                if (correction_completed) {
+                    // Discard integral accumulated during the temporary trim
+                    // so the follower does not steer past zero error.
+                    right_speed_pid_.reset();
+                }
+
+                right_pid_target_mps = std::clamp(
+                    right_pid_target_mps,
+                    0.0f,
+                    config::robot::MAX_WHEEL_SPEED_MPS);
             }
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
@@ -484,7 +499,7 @@ void MotionLoopTask::publishTelemetry()
 void MotionLoopTask::publishImuDiagnostic(
     const MotionControlSnapshot& snapshot)
 {
-    constexpr uint32_t MQTT_PERIOD_MS = 500;
+    constexpr uint32_t MQTT_PERIOD_MS = 100;
     constexpr char MQTT_TOPIC[] = "diagnostic/imu/heading";
 
     if (snapshot.state != model::MotionState::MOVING) {

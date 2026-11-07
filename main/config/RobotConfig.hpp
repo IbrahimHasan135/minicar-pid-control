@@ -10,11 +10,13 @@ constexpr int ENCODER_TICKS_PER_REV = 1766;
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
-constexpr float STRAIGHT_HEADING_TRIGGER_DEG = 1.0f;
+constexpr float STRAIGHT_HEADING_TRIGGER_DEG = 2.0f;
+constexpr float STRAIGHT_HEADING_LARGE_ERROR_DEG = 10.0f;
+constexpr float STRAIGHT_RIGHT_WHEEL_FINE_TRIM_MPS = 0.03f;
 constexpr float STRAIGHT_RIGHT_WHEEL_TRIM_MPS = 0.06f;
-// Disabled during IMU consistency diagnostics. The right motor only follows
-// the measured speed of the left motor while this is false.
-constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = false;
+// IMU is a discrete supervisor, not a heading PID. It temporarily trims the
+// right follower until the measured heading crosses the starting heading.
+constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
 constexpr float MIN_TURN_OUTPUT = 0.12f;
