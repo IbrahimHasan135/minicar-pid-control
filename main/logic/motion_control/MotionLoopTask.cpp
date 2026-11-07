@@ -377,10 +377,12 @@ void MotionLoopTask::applySpeedControl(float dt_s)
         if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
             right_pid_target_mps = filtered_left_speed_mps_;
 
-            // Positive drift means the car has veered right: speed up the
-            // right follower until the heading crosses the original heading.
-            // Negative drift does the inverse. The latch prevents rapid
-            // direction changes before the original heading is recovered.
+            // The measured hardware convention is:
+            //   negative drift -> speed up the right follower
+            //   positive drift -> slow down the right follower
+            // Keep the correction latched until the heading reaches/crosses
+            // the original heading. This is a discrete supervisor, not a
+            // heading PID.
             const MotionControlSnapshot snapshot = context_.snapshot();
             const float heading_drift_deg =
                 service::HeadingService::shortestAngleErrorDeg(
@@ -394,23 +396,23 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     if (heading_drift_deg >=
                         config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
                         straight_heading_correction_ =
-                            StraightHeadingCorrection::SPEED_UP_RIGHT;
+                            StraightHeadingCorrection::SLOW_DOWN_RIGHT;
                     } else if (heading_drift_deg <=
                                -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
                         straight_heading_correction_ =
-                            StraightHeadingCorrection::SLOW_DOWN_RIGHT;
+                            StraightHeadingCorrection::SPEED_UP_RIGHT;
                     }
                 } else if (
                     straight_heading_correction_ ==
                         StraightHeadingCorrection::SPEED_UP_RIGHT &&
-                    heading_drift_deg <= 0.0f) {
+                    heading_drift_deg >= 0.0f) {
                     straight_heading_correction_ =
                         StraightHeadingCorrection::NONE;
                     correction_completed = true;
                 } else if (
                     straight_heading_correction_ ==
                         StraightHeadingCorrection::SLOW_DOWN_RIGHT &&
-                    heading_drift_deg >= 0.0f) {
+                    heading_drift_deg <= 0.0f) {
                     straight_heading_correction_ =
                         StraightHeadingCorrection::NONE;
                     correction_completed = true;
