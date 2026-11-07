@@ -502,15 +502,18 @@ void MotionLoopTask::publishImuDiagnostic(
     const float delta_heading_deg =
         service::HeadingService::shortestAngleErrorDeg(
             current_heading_deg, initial_heading_deg);
+    const int initial_heading = static_cast<int>(std::lround(initial_heading_deg));
+    const int current_heading = static_cast<int>(std::lround(current_heading_deg));
+    const int delta_heading = static_cast<int>(std::lround(delta_heading_deg));
 
     char payload[160]{};
     const int length = std::snprintf(
         payload,
         sizeof(payload),
-        "{\"imu_initial_deg\":%.3f,\"imu_current_deg\":%.3f,\"imu_delta_deg\":%.3f}",
-        static_cast<double>(initial_heading_deg),
-        static_cast<double>(current_heading_deg),
-        static_cast<double>(delta_heading_deg));
+        "{\"imu_initial_deg\":%d,\"imu_current_deg\":%d,\"imu_delta_deg\":%d}",
+        initial_heading,
+        current_heading,
+        delta_heading);
     if (length <= 0 || static_cast<size_t>(length) >= sizeof(payload)) {
         return;
     }

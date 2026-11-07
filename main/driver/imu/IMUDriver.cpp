@@ -181,6 +181,12 @@ esp_err_t IMUDriver::readHeadingDeg(float& heading_deg) const
     if (heading_deg < 0.0f) {
         heading_deg += 360.0f;
     }
+    heading_deg = std::round(
+        heading_deg / config::imu_hardware::HEADING_QUANTIZATION_DEG) *
+        config::imu_hardware::HEADING_QUANTIZATION_DEG;
+    if (heading_deg >= 360.0f) {
+        heading_deg = 0.0f;
+    }
     return ESP_OK;
 }
 
