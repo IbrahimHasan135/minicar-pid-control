@@ -21,12 +21,14 @@ MotionLoopTask::MotionLoopTask(
     service::MotorControlService& motor_service,
     service::HeadingService& heading_service,
     service::OdometryService& odometry_service,
-    QueueHandle_t telemetry_queue)
+    QueueHandle_t telemetry_queue,
+    logic::MqttPublishEventQueue& mqtt_publish_queue)
     : context_(context),
       motor_service_(motor_service),
       heading_service_(heading_service),
       odometry_service_(odometry_service),
       telemetry_queue_(telemetry_queue),
+      mqtt_publish_queue_(mqtt_publish_queue),
       left_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
       right_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD)
 {
@@ -89,6 +91,7 @@ void MotionLoopTask::step(float dt_s)
     handleSnapshot(context_.snapshot(), dt_s);
     applySpeedControl(dt_s);
     publishTelemetry();
+    publishImuDiagnostic(context_.snapshot());
 }
 
 void MotionLoopTask::updateServices(float dt_s)
@@ -384,6 +387,7 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     heading_service_.getHeadingDeg(),
                     snapshot.target_heading_deg);
 
+            if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
             if (straight_heading_correction_ == StraightHeadingCorrection::NONE) {
                 if (heading_drift_deg >=
                     config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
@@ -420,6 +424,7 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                 right_pid_target_mps,
                 0.0f,
                 config::robot::MAX_WHEEL_SPEED_MPS);
+            }
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
         }
@@ -474,6 +479,46 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(odometry_service_.getTravelledDistanceM()));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();
+}
+
+void MotionLoopTask::publishImuDiagnostic(
+    const MotionControlSnapshot& snapshot)
+{
+    constexpr uint32_t MQTT_PERIOD_MS = 500;
+    constexpr char MQTT_TOPIC[] = "diagnostic/imu/heading";
+
+    if (snapshot.state != model::MotionState::MOVING) {
+        return;
+    }
+
+    const TickType_t now = xTaskGetTickCount();
+    if (last_imu_mqtt_tick_ != 0 &&
+        (now - last_imu_mqtt_tick_) < pdMS_TO_TICKS(MQTT_PERIOD_MS)) {
+        return;
+    }
+
+    const float initial_heading_deg = snapshot.target_heading_deg;
+    const float current_heading_deg = heading_service_.getHeadingDeg();
+    const float delta_heading_deg =
+        service::HeadingService::shortestAngleErrorDeg(
+            current_heading_deg, initial_heading_deg);
+
+    char payload[160]{};
+    const int length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"imu_initial_deg\":%.3f,\"imu_current_deg\":%.3f,\"imu_delta_deg\":%.3f}",
+        static_cast<double>(initial_heading_deg),
+        static_cast<double>(current_heading_deg),
+        static_cast<double>(delta_heading_deg));
+    if (length <= 0 || static_cast<size_t>(length) >= sizeof(payload)) {
+        return;
+    }
+
+    if (mqtt_publish_queue_.pushJson(MQTT_TOPIC, payload, 0)) {
+        last_imu_mqtt_tick_ = now;
+        ESP_LOGI(kTag, "IMU MQTT queued: %s", payload);
+    }
 }
 
 bool MotionLoopTask::servicesReady() const

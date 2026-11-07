@@ -5,6 +5,7 @@
 #include "config/FreeRTOSConfig.hpp"
 #include "config/MotorHardwareConfig.hpp"
 #include "config/NetworkConfig.hpp"
+#include "config/RobotConfig.hpp"
 #include "driver/communication/MqttDriver.hpp"
 #include "driver/communication/ProvisioningPortalDriver.hpp"
 #include "driver/communication/WifiDriver.hpp"
@@ -123,7 +124,8 @@ extern "C" void app_main(void)
 
     static logic::motion_control::MotionCommandTask motion_command_task(motion_queue, motion_context);
     static logic::motion_control::MotionLoopTask motion_loop_task(
-        motion_context, motor_service, heading_service, odometry_service, telemetry_queue);
+        motion_context, motor_service, heading_service, odometry_service,
+        telemetry_queue, mqtt_publish_queue);
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
     static logic::NavigationSerialTask navigation_serial_task(
         navigation_serial_service, mqtt_publish_queue);
@@ -139,7 +141,7 @@ extern "C" void app_main(void)
     (void)motion_loop_task.start();
     (void)motion_command_task.start();
     const esp_err_t mqtt_queue_result = mqtt_publish_queue.create(
-        config::network::MQTT_PUBLISH_QUEUE_LENGTH);
+        config::robot::IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH);
     if (mqtt_queue_result == ESP_OK) {
         const BaseType_t task_result = wifi_mqtt_task.start();
         if (task_result != pdPASS) ESP_LOGE(TAG, "Wi-Fi/MQTT task creation failed");
@@ -156,9 +158,9 @@ extern "C" void app_main(void)
 
     publishStartupTelemetry(
         telemetry_queue,
-        "initial motor test queued: forward 1 m, right 90 deg, then stop");
-    if (!application::Mission::enqueueInitialTestMission(motion_queue)) {
-        ESP_LOGE(TAG, "failed to enqueue initial motor test mission");
+        "IMU diagnostic queued: forward 3 m with left-master speed control");
+    if (!application::Mission::enqueueImuDiagnosticMission(motion_queue)) {
+        ESP_LOGE(TAG, "failed to enqueue IMU diagnostic mission");
         motor_service.stopMotor();
     }
 }

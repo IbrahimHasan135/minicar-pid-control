@@ -4,6 +4,13 @@
 
 namespace minicar::application {
 
+bool Mission::enqueueImuDiagnosticMission(QueueHandle_t motion_queue)
+{
+    constexpr float TEST_DISTANCE_M = 3.0f;
+    constexpr float TEST_SPEED_MPS = 0.2f;
+    return pushMove(motion_queue, TEST_DISTANCE_M, TEST_SPEED_MPS);
+}
+
 bool Mission::enqueueInitialTestMission(QueueHandle_t motion_queue)
 {
     constexpr float TEST_DISTANCE_M = 1.0f;
