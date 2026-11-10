@@ -141,7 +141,6 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
-    right_encoder_fault_since_tick_ = 0;
     heading_service_.resetController();
 
     const float speed_mps = std::clamp(
@@ -325,7 +324,6 @@ void MotionLoopTask::stopAndIdle()
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
-    right_encoder_fault_since_tick_ = 0;
     context_.setIdle();
 }
 
@@ -338,7 +336,6 @@ void MotionLoopTask::failSafeStop()
     right_speed_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
-    right_encoder_fault_since_tick_ = 0;
     context_.setError();
 }
 
@@ -359,35 +356,6 @@ void MotionLoopTask::applySpeedControl(float dt_s)
 
     const float left_speed_mps = motor_service_.getLeftVelocityMps();
     const float right_speed_mps = motor_service_.getRightVelocityMps();
-
-    // Never let a missing/reversed right encoder drive the follower PID to
-    // full output indefinitely. Forward motion requires positive feedback
-    // from both wheels once the left wheel is clearly moving.
-    const bool right_encoder_feedback_missing =
-        left_speed_mps >= config::robot::ENCODER_FAULT_PEER_SPEED_MPS &&
-        right_speed_mps < config::robot::ENCODER_FAULT_MIN_FEEDBACK_MPS &&
-        previous_right_output_ >= config::robot::ENCODER_FAULT_HIGH_OUTPUT;
-    const TickType_t now = xTaskGetTickCount();
-    if (right_encoder_feedback_missing) {
-        if (right_encoder_fault_since_tick_ == 0) {
-            right_encoder_fault_since_tick_ = now;
-        } else if ((now - right_encoder_fault_since_tick_) >=
-                   pdMS_TO_TICKS(config::robot::ENCODER_FAULT_TIMEOUT_MS)) {
-            ESP_LOGE(
-                kTag,
-                "right encoder fault: left=%.3f right=%.3f output=%.2f ticks=%ld/%ld; motors stopped",
-                static_cast<double>(left_speed_mps),
-                static_cast<double>(right_speed_mps),
-                static_cast<double>(previous_right_output_),
-                static_cast<long>(motor_service_.getLeftTicks()),
-                static_cast<long>(motor_service_.getRightTicks()));
-            failSafeStop();
-            return;
-        }
-    } else {
-        right_encoder_fault_since_tick_ = 0;
-    }
-
     if (!feedback_filter_initialized_) {
         filtered_left_speed_mps_ = left_speed_mps;
         filtered_right_speed_mps_ = right_speed_mps;
@@ -483,7 +451,7 @@ void MotionLoopTask::publishTelemetry()
     std::snprintf(message.tag, sizeof(message.tag), "%s", "motion");
     std::snprintf(
         message.message, sizeof(message.message),
-        "s=%u h=%.1f th=%.1f y=%.1f v=%.2f/%.2f o=%.2f/%.2f t=%ld/%ld",
+        "s=%u h=%.1f th=%.1f y=%.1f v=%.2f/%.2f o=%.2f/%.2f d=%.2f",
         static_cast<unsigned>(snapshot.state),
         static_cast<double>(heading_service_.getHeadingDeg()),
         static_cast<double>(snapshot.target_heading_deg),
@@ -492,8 +460,7 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(motor_service_.getRightVelocityMps()),
         static_cast<double>(previous_left_output_),
         static_cast<double>(previous_right_output_),
-        static_cast<long>(motor_service_.getLeftTicks()),
-        static_cast<long>(motor_service_.getRightTicks()));
+        static_cast<double>(odometry_service_.getTravelledDistanceM()));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();
 }
