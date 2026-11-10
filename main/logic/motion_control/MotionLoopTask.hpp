@@ -68,6 +68,7 @@ private:
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
     TickType_t last_imu_mqtt_tick_{0};
+    TickType_t right_encoder_fault_since_tick_{0};
     TickType_t move_until_tick_{0};
     TickType_t wait_until_tick_{0};
     float turn_direction_{1.0f};
