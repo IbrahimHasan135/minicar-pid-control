@@ -65,6 +65,7 @@ private:
     float filtered_right_speed_mps_{0.0f};
     float previous_left_output_{0.0f};
     float previous_right_output_{0.0f};
+    float right_heading_output_trim_{0.0f};
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
     TickType_t last_imu_mqtt_tick_{0};

@@ -10,14 +10,14 @@ constexpr int ENCODER_TICKS_PER_REV = 1766;
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
-// Continuous PD heading correction for straight movement. Position error
-// supplies the restoring trim; yaw rate damps the correction before the car
-// crosses the starting heading. The IMU output is quantized to 2 degrees, so
-// there is no additional angular deadband.
-constexpr float STRAIGHT_HEADING_KP_MPS_PER_DEG = 0.0025f;
-constexpr float STRAIGHT_HEADING_KD_MPS_PER_DPS = 0.0005f;
+// Continuous PD trim applied directly to the right motor output after its
+// speed PID. This prevents a saturated speed loop from masking the heading
+// correction. The IMU output is quantized to 2 degrees, so there is no
+// additional angular deadband.
+constexpr float STRAIGHT_HEADING_KP_OUTPUT_PER_DEG = 0.04f;
+constexpr float STRAIGHT_HEADING_KD_OUTPUT_PER_DPS = 0.003f;
 constexpr float STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS = 50.0f;
-constexpr float STRAIGHT_HEADING_MAX_TRIM_MPS = 0.08f;
+constexpr float STRAIGHT_HEADING_MAX_OUTPUT_TRIM = 0.60f;
 constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;

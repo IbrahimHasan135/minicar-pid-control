@@ -140,6 +140,7 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     filtered_right_speed_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    right_heading_output_trim_ = 0.0f;
     feedback_filter_initialized_ = false;
     heading_service_.resetController();
 
@@ -323,6 +324,7 @@ void MotionLoopTask::stopAndIdle()
     filtered_right_speed_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    right_heading_output_trim_ = 0.0f;
     feedback_filter_initialized_ = false;
     context_.setIdle();
 }
@@ -336,6 +338,7 @@ void MotionLoopTask::failSafeStop()
     right_speed_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    right_heading_output_trim_ = 0.0f;
     context_.setError();
 }
 
@@ -368,6 +371,7 @@ void MotionLoopTask::applySpeedControl(float dt_s)
 
     float left_pid_target_mps = left_target_mps_;
     float right_pid_target_mps = right_target_mps_;
+    right_heading_output_trim_ = 0.0f;
     // Master/follower synchronization is only for straight-line motion.
     // During a turn, the two wheel targets must keep opposite signs.
     if (context_.snapshot().state == model::MotionState::MOVING) {
@@ -377,11 +381,10 @@ void MotionLoopTask::applySpeedControl(float dt_s)
             // Measured hardware convention:
             //   negative drift -> speed up the right follower
             //   positive drift -> slow down the right follower
-            // Apply continuous PD correction. The yaw-rate term starts
-            // reducing the trim while the chassis is already rotating toward
-            // zero, preventing the fixed-delay drivetrain from crossing far
-            // into the opposite side. It also provides a short braking trim
-            // at zero error until rotation has settled.
+            // Calculate a continuous PD correction every control cycle. It is
+            // applied directly to the motor output below, after the speed PID,
+            // so a saturated encoder loop cannot hide a reversal of heading
+            // error. The yaw-rate term brakes rotation near/crossing zero.
             const MotionControlSnapshot snapshot = context_.snapshot();
             const float heading_drift_deg =
                 service::HeadingService::shortestAngleErrorDeg(
@@ -393,21 +396,15 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     heading_service_.getYawRateDps(),
                     -config::robot::STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS,
                     config::robot::STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS);
-                float right_wheel_trim_mps =
-                    -config::robot::STRAIGHT_HEADING_KP_MPS_PER_DEG *
+                right_heading_output_trim_ =
+                    -config::robot::STRAIGHT_HEADING_KP_OUTPUT_PER_DEG *
                         heading_drift_deg -
-                    config::robot::STRAIGHT_HEADING_KD_MPS_PER_DPS *
+                    config::robot::STRAIGHT_HEADING_KD_OUTPUT_PER_DPS *
                         damped_yaw_rate_dps;
-                right_wheel_trim_mps = std::clamp(
-                    right_wheel_trim_mps,
-                    -config::robot::STRAIGHT_HEADING_MAX_TRIM_MPS,
-                    config::robot::STRAIGHT_HEADING_MAX_TRIM_MPS);
-                right_pid_target_mps += right_wheel_trim_mps;
-
-                right_pid_target_mps = std::clamp(
-                    right_pid_target_mps,
-                    0.0f,
-                    config::robot::MAX_WHEEL_SPEED_MPS);
+                right_heading_output_trim_ = std::clamp(
+                    right_heading_output_trim_,
+                    -config::robot::STRAIGHT_HEADING_MAX_OUTPUT_TRIM,
+                    config::robot::STRAIGHT_HEADING_MAX_OUTPUT_TRIM);
             }
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
@@ -419,7 +416,8 @@ void MotionLoopTask::applySpeedControl(float dt_s)
         (config::pid::SPEED_FEED_FORWARD * left_pid_target_mps);
     const float right_output = right_speed_pid_.update(
         right_pid_target_mps, filtered_right_speed_mps_, dt_s) +
-        (config::pid::SPEED_FEED_FORWARD * right_pid_target_mps);
+        (config::pid::SPEED_FEED_FORWARD * right_pid_target_mps) +
+        right_heading_output_trim_;
     const float max_output_step = config::pid::SPEED_OUTPUT_SLEW_RATE * dt_s;
     const float left_slewed = std::clamp(
         left_output, previous_left_output_ - max_output_step,
@@ -451,7 +449,7 @@ void MotionLoopTask::publishTelemetry()
     std::snprintf(message.tag, sizeof(message.tag), "%s", "motion");
     std::snprintf(
         message.message, sizeof(message.message),
-        "s=%u h=%.1f th=%.1f y=%.1f v=%.2f/%.2f o=%.2f/%.2f d=%.2f",
+        "s=%u h=%.1f th=%.1f y=%.1f v=%.2f/%.2f o=%.2f/%.2f c=%.2f d=%.2f",
         static_cast<unsigned>(snapshot.state),
         static_cast<double>(heading_service_.getHeadingDeg()),
         static_cast<double>(snapshot.target_heading_deg),
@@ -460,6 +458,7 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(motor_service_.getRightVelocityMps()),
         static_cast<double>(previous_left_output_),
         static_cast<double>(previous_right_output_),
+        static_cast<double>(right_heading_output_trim_),
         static_cast<double>(odometry_service_.getTravelledDistanceM()));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();
