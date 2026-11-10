@@ -141,7 +141,6 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
-    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     heading_service_.resetController();
 
     const float speed_mps = std::clamp(
@@ -325,7 +324,6 @@ void MotionLoopTask::stopAndIdle()
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     feedback_filter_initialized_ = false;
-    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     context_.setIdle();
 }
 
@@ -338,7 +336,6 @@ void MotionLoopTask::failSafeStop()
     right_speed_pid_.reset();
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
-    straight_heading_correction_ = StraightHeadingCorrection::NONE;
     context_.setError();
 }
 
@@ -377,12 +374,11 @@ void MotionLoopTask::applySpeedControl(float dt_s)
         if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
             right_pid_target_mps = filtered_left_speed_mps_;
 
-            // The measured hardware convention is:
+            // Measured hardware convention:
             //   negative drift -> speed up the right follower
             //   positive drift -> slow down the right follower
-            // Stateless, tiered heading correction. Large errors receive a
-            // strong trim, medium errors a gentle trim, and errors inside the
-            // deadband receive no IMU trim. This is not a heading PID.
+            // Apply a continuous proportional trim. There is no angular
+            // deadband: only an exact zero error disables correction.
             const MotionControlSnapshot snapshot = context_.snapshot();
             const float heading_drift_deg =
                 service::HeadingService::shortestAngleErrorDeg(
@@ -390,36 +386,22 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     snapshot.target_heading_deg);
 
             if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
-                StraightHeadingCorrection requested_correction =
-                    StraightHeadingCorrection::NONE;
-                if (heading_drift_deg <=
-                    -config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
-                    requested_correction =
-                        StraightHeadingCorrection::SPEED_UP_RIGHT;
-                } else if (heading_drift_deg >=
-                           config::robot::STRAIGHT_HEADING_TRIGGER_DEG) {
-                    requested_correction =
-                        StraightHeadingCorrection::SLOW_DOWN_RIGHT;
-                }
+                float right_wheel_trim_mps =
+                    -config::robot::STRAIGHT_HEADING_KP_MPS_PER_DEG *
+                    heading_drift_deg;
+                right_wheel_trim_mps = std::clamp(
+                    right_wheel_trim_mps,
+                    -config::robot::STRAIGHT_HEADING_MAX_TRIM_MPS,
+                    config::robot::STRAIGHT_HEADING_MAX_TRIM_MPS);
 
-                if (requested_correction != straight_heading_correction_) {
-                    // Remove integral left by the previous correction mode.
-                    right_speed_pid_.reset();
-                    straight_heading_correction_ = requested_correction;
+                if (heading_drift_deg != 0.0f &&
+                    std::fabs(right_wheel_trim_mps) <
+                        config::robot::STRAIGHT_HEADING_MIN_TRIM_MPS) {
+                    right_wheel_trim_mps = std::copysign(
+                        config::robot::STRAIGHT_HEADING_MIN_TRIM_MPS,
+                        right_wheel_trim_mps);
                 }
-
-                const float right_wheel_trim_mps =
-                    std::fabs(heading_drift_deg) >=
-                            config::robot::STRAIGHT_HEADING_LARGE_ERROR_DEG
-                        ? config::robot::STRAIGHT_RIGHT_WHEEL_TRIM_MPS
-                        : config::robot::STRAIGHT_RIGHT_WHEEL_FINE_TRIM_MPS;
-                if (straight_heading_correction_ ==
-                    StraightHeadingCorrection::SPEED_UP_RIGHT) {
-                    right_pid_target_mps += right_wheel_trim_mps;
-                } else if (straight_heading_correction_ ==
-                           StraightHeadingCorrection::SLOW_DOWN_RIGHT) {
-                    right_pid_target_mps -= right_wheel_trim_mps;
-                }
+                right_pid_target_mps += right_wheel_trim_mps;
 
                 right_pid_target_mps = std::clamp(
                     right_pid_target_mps,

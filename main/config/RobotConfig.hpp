@@ -10,12 +10,13 @@ constexpr int ENCODER_TICKS_PER_REV = 1766;
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
-constexpr float STRAIGHT_HEADING_TRIGGER_DEG = 4.0f;
-constexpr float STRAIGHT_HEADING_LARGE_ERROR_DEG = 10.0f;
-constexpr float STRAIGHT_RIGHT_WHEEL_FINE_TRIM_MPS = 0.03f;
-constexpr float STRAIGHT_RIGHT_WHEEL_TRIM_MPS = 0.06f;
-// IMU is a discrete supervisor, not a heading PID. It temporarily trims the
-// right follower until the measured heading crosses the starting heading.
+// Continuous proportional heading correction for straight movement. The IMU
+// output is quantized to 2 degrees, so zero is the only no-correction state.
+// A larger error produces a larger right-wheel speed trim, while the minimum
+// trim keeps a remaining 2-degree error from being ignored.
+constexpr float STRAIGHT_HEADING_KP_MPS_PER_DEG = 0.004f;
+constexpr float STRAIGHT_HEADING_MIN_TRIM_MPS = 0.008f;
+constexpr float STRAIGHT_HEADING_MAX_TRIM_MPS = 0.10f;
 constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
