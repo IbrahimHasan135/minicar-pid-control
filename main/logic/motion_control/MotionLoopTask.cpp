@@ -377,8 +377,11 @@ void MotionLoopTask::applySpeedControl(float dt_s)
             // Measured hardware convention:
             //   negative drift -> speed up the right follower
             //   positive drift -> slow down the right follower
-            // Apply a continuous proportional trim. There is no angular
-            // deadband: only an exact zero error disables correction.
+            // Apply continuous PD correction. The yaw-rate term starts
+            // reducing the trim while the chassis is already rotating toward
+            // zero, preventing the fixed-delay drivetrain from crossing far
+            // into the opposite side. It also provides a short braking trim
+            // at zero error until rotation has settled.
             const MotionControlSnapshot snapshot = context_.snapshot();
             const float heading_drift_deg =
                 service::HeadingService::shortestAngleErrorDeg(
@@ -386,21 +389,19 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     snapshot.target_heading_deg);
 
             if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
+                const float damped_yaw_rate_dps = std::clamp(
+                    heading_service_.getYawRateDps(),
+                    -config::robot::STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS,
+                    config::robot::STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS);
                 float right_wheel_trim_mps =
                     -config::robot::STRAIGHT_HEADING_KP_MPS_PER_DEG *
-                    heading_drift_deg;
+                        heading_drift_deg -
+                    config::robot::STRAIGHT_HEADING_KD_MPS_PER_DPS *
+                        damped_yaw_rate_dps;
                 right_wheel_trim_mps = std::clamp(
                     right_wheel_trim_mps,
                     -config::robot::STRAIGHT_HEADING_MAX_TRIM_MPS,
                     config::robot::STRAIGHT_HEADING_MAX_TRIM_MPS);
-
-                if (heading_drift_deg != 0.0f &&
-                    std::fabs(right_wheel_trim_mps) <
-                        config::robot::STRAIGHT_HEADING_MIN_TRIM_MPS) {
-                    right_wheel_trim_mps = std::copysign(
-                        config::robot::STRAIGHT_HEADING_MIN_TRIM_MPS,
-                        right_wheel_trim_mps);
-                }
                 right_pid_target_mps += right_wheel_trim_mps;
 
                 right_pid_target_mps = std::clamp(
