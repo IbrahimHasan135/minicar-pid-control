@@ -396,11 +396,14 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     heading_service_.getYawRateDps(),
                     -config::robot::STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS,
                     config::robot::STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS);
-                right_heading_output_trim_ =
+                const float heading_correction =
                     -config::robot::STRAIGHT_HEADING_KP_OUTPUT_PER_DEG *
                         heading_drift_deg -
                     config::robot::STRAIGHT_HEADING_KD_OUTPUT_PER_DPS *
                         damped_yaw_rate_dps;
+                right_heading_output_trim_ =
+                    config::robot::STRAIGHT_HEADING_CORRECTION_SIGN *
+                    heading_correction;
                 right_heading_output_trim_ = std::clamp(
                     right_heading_output_trim_,
                     -config::robot::STRAIGHT_HEADING_MAX_OUTPUT_TRIM,
@@ -460,6 +463,20 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(previous_right_output_),
         static_cast<double>(right_heading_output_trim_),
         static_cast<double>(odometry_service_.getTravelledDistanceM()));
+    ESP_LOGI(
+        kTag,
+        "IMU heading=%.1f target=%.1f drift=%.1f yaw=%.1f trim=%.2f "
+        "speed=%.2f/%.2f output=%.2f/%.2f",
+        static_cast<double>(heading_service_.getHeadingDeg()),
+        static_cast<double>(snapshot.target_heading_deg),
+        static_cast<double>(service::HeadingService::shortestAngleErrorDeg(
+            heading_service_.getHeadingDeg(), snapshot.target_heading_deg)),
+        static_cast<double>(heading_service_.getYawRateDps()),
+        static_cast<double>(right_heading_output_trim_),
+        static_cast<double>(motor_service_.getLeftVelocityMps()),
+        static_cast<double>(motor_service_.getRightVelocityMps()),
+        static_cast<double>(previous_left_output_),
+        static_cast<double>(previous_right_output_));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();
 }
