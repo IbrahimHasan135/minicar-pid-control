@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "logic/motion_control/MotionControlContext.hpp"
+#include "logic/communication/MqttPublishEventQueue.hpp"
 #include "model/MotionCommand.hpp"
 #include "model/TelemetryMessage.hpp"
 #include "service/control/PIDController.hpp"
@@ -20,7 +21,8 @@ public:
         service::MotorControlService& motor_service,
         service::HeadingService& heading_service,
         service::OdometryService& odometry_service,
-        QueueHandle_t telemetry_queue);
+        QueueHandle_t telemetry_queue,
+        logic::MqttPublishEventQueue& mqtt_publish_queue);
 
     BaseType_t start();
 
@@ -42,6 +44,7 @@ private:
     void failSafeStop();
     void applySpeedControl(float dt_s);
     void publishTelemetry();
+    void publishImuDiagnostic(const MotionControlSnapshot& snapshot);
 
     bool servicesReady() const;
     bool isValidMove(const model::MotionCommand& command) const;
@@ -53,6 +56,7 @@ private:
     service::HeadingService& heading_service_;
     service::OdometryService& odometry_service_;
     QueueHandle_t telemetry_queue_{nullptr};
+    logic::MqttPublishEventQueue& mqtt_publish_queue_;
     service::PIDController left_speed_pid_;
     service::PIDController right_speed_pid_;
     float left_target_mps_{0.0f};
@@ -61,8 +65,10 @@ private:
     float filtered_right_speed_mps_{0.0f};
     float previous_left_output_{0.0f};
     float previous_right_output_{0.0f};
+    float right_heading_output_trim_{0.0f};
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
+    TickType_t last_imu_mqtt_tick_{0};
     TickType_t move_until_tick_{0};
     TickType_t wait_until_tick_{0};
     float turn_direction_{1.0f};

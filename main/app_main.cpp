@@ -5,6 +5,7 @@
 #include "config/FreeRTOSConfig.hpp"
 #include "config/MotorHardwareConfig.hpp"
 #include "config/NetworkConfig.hpp"
+#include "config/RobotConfig.hpp"
 #include "driver/communication/MqttDriver.hpp"
 #include "driver/communication/ProvisioningPortalDriver.hpp"
 #include "driver/communication/WifiDriver.hpp"
@@ -121,12 +122,14 @@ extern "C" void app_main(void)
     // implemented. Telemetry still uses the ConsoleDriver and its queue.
     ESP_LOGI(TAG, "serial task/service disabled until SerialDriver is implemented");
 
-    static logic::motion_control::MotionCommandTask motion_command_task(motion_queue, motion_context);
+    static logic::motion_control::MotionCommandTask motion_command_task(
+        motion_queue, motion_context);
     static logic::motion_control::MotionLoopTask motion_loop_task(
-        motion_context, motor_service, heading_service, odometry_service, telemetry_queue);
+        motion_context, motor_service, heading_service, odometry_service,
+        telemetry_queue, mqtt_publish_queue);
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
     static logic::NavigationSerialTask navigation_serial_task(
-        navigation_serial_service);
+        navigation_serial_service, mqtt_publish_queue);
     if (navigation_serial_task.init() != ESP_OK) {
         ESP_LOGE(TAG, "navigation StreamBuffer creation failed");
         motor_service.stopMotor();
@@ -136,38 +139,30 @@ extern "C" void app_main(void)
         mqtt_publish_queue, wifi_service, mqtt_communication_service);
 
     (void)telemetry_task.start();
-    (void)motion_loop_task.start();
-    (void)motion_command_task.start();
-    if (navigation_serial_task.start() != ESP_OK) {
-        ESP_LOGE(TAG, "navigation FreeRTOS tasks failed to start");
-        motor_service.stopMotor();
-        return;
-    }
-
     const esp_err_t mqtt_queue_result = mqtt_publish_queue.create(
-        config::network::MQTT_PUBLISH_QUEUE_LENGTH);
+        config::robot::IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH);
     if (mqtt_queue_result == ESP_OK) {
-        constexpr char kTestTopic[] = "novalynk/minicar/arand/test";
-        constexpr char kTestPayload[] =
-            "{\"test\":\"wifi-mqtt-step4\",\"value1\":51,\"value2\":48,"
-            "\"value3\":46,\"value4\":106}";
-        const bool test_event_queued = mqtt_publish_queue.pushJson(
-            kTestTopic, kTestPayload, 0);
-        ESP_LOGI(TAG,
-                 "MQTT test event %s: topic=%s payload=%s",
-                 test_event_queued ? "queued" : "rejected",
-                 kTestTopic,
-                 kTestPayload);
-
         const BaseType_t task_result = wifi_mqtt_task.start();
         if (task_result != pdPASS) ESP_LOGE(TAG, "Wi-Fi/MQTT task creation failed");
     } else {
         ESP_LOGE(TAG, "MQTT publish queue unavailable; motion tasks continue without MQTT");
     }
+
+    (void)motion_loop_task.start();
+    (void)motion_command_task.start();
+
+    if (navigation_serial_task.start() != ESP_OK) {
+        ESP_LOGE(TAG, "navigation FreeRTOS tasks failed to start");
+        motor_service.stopMotor();
+        return;
+    }
     // SerialTask is intentionally disabled until SerialDriver is implemented.
 
     publishStartupTelemetry(
         telemetry_queue,
-        "navigation UART and Wi-Fi/MQTT ready; motor remains stopped");
-    motor_service.stopMotor();
+        "continuous heading control test: forward 3 m; UART-to-MQTT active");
+    if (!application::Mission::enqueueImuDiagnosticMission(motion_queue)) {
+        ESP_LOGE(TAG, "failed to enqueue heading-control test mission");
+        motor_service.stopMotor();
+    }
 }
