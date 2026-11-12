@@ -91,7 +91,6 @@ void MotionLoopTask::step(float dt_s)
     handleSnapshot(context_.snapshot(), dt_s);
     applySpeedControl(dt_s);
     publishTelemetry();
-    publishImuDiagnostic(context_.snapshot());
 }
 
 void MotionLoopTask::updateServices(float dt_s)
@@ -479,49 +478,6 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(previous_right_output_));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();
-}
-
-void MotionLoopTask::publishImuDiagnostic(
-    const MotionControlSnapshot& snapshot)
-{
-    constexpr uint32_t MQTT_PERIOD_MS = 100;
-    constexpr char MQTT_TOPIC[] = "diagnostic/imu/heading";
-
-    if (snapshot.state != model::MotionState::MOVING) {
-        return;
-    }
-
-    const TickType_t now = xTaskGetTickCount();
-    if (last_imu_mqtt_tick_ != 0 &&
-        (now - last_imu_mqtt_tick_) < pdMS_TO_TICKS(MQTT_PERIOD_MS)) {
-        return;
-    }
-
-    const float initial_heading_deg = snapshot.target_heading_deg;
-    const float current_heading_deg = heading_service_.getHeadingDeg();
-    const float delta_heading_deg =
-        service::HeadingService::shortestAngleErrorDeg(
-            current_heading_deg, initial_heading_deg);
-    const int initial_heading = static_cast<int>(std::lround(initial_heading_deg));
-    const int current_heading = static_cast<int>(std::lround(current_heading_deg));
-    const int delta_heading = static_cast<int>(std::lround(delta_heading_deg));
-
-    char payload[160]{};
-    const int length = std::snprintf(
-        payload,
-        sizeof(payload),
-        "{\"imu_initial_deg\":%d,\"imu_current_deg\":%d,\"imu_delta_deg\":%d}",
-        initial_heading,
-        current_heading,
-        delta_heading);
-    if (length <= 0 || static_cast<size_t>(length) >= sizeof(payload)) {
-        return;
-    }
-
-    if (mqtt_publish_queue_.pushJson(MQTT_TOPIC, payload, 0)) {
-        last_imu_mqtt_tick_ = now;
-        ESP_LOGI(kTag, "IMU MQTT queued: %s", payload);
-    }
 }
 
 bool MotionLoopTask::servicesReady() const

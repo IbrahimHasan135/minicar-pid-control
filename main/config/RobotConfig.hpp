@@ -14,9 +14,9 @@ constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
 // speed PID. This prevents a saturated speed loop from masking the heading
 // correction. The IMU output is quantized to 2 degrees, so there is no
 // additional angular deadband.
-// Temporary sign flip for bench validation. Set to +1 after validation if
-// the original correction direction is the physically correct one.
-constexpr float STRAIGHT_HEADING_CORRECTION_SIGN = -1.0f;
+// Hardware-tested direction: a positive drift slows the right wheel, while
+// a negative drift speeds it up, steering the car back toward zero.
+constexpr float STRAIGHT_HEADING_CORRECTION_SIGN = 1.0f;
 constexpr float STRAIGHT_HEADING_KP_OUTPUT_PER_DEG = 0.015f;
 constexpr float STRAIGHT_HEADING_KD_OUTPUT_PER_DPS = 0.001f;
 constexpr float STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS = 30.0f;
