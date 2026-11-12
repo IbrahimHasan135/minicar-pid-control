@@ -64,7 +64,9 @@ private:
     float filtered_right_speed_mps_{0.0f};
     float previous_left_output_{0.0f};
     float previous_right_output_{0.0f};
-    float right_heading_output_trim_{0.0f};
+    float heading_error_deg_{0.0f};
+    float heading_speed_correction_mps_{0.0f};
+    float right_pid_target_mps_{0.0f};
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
     TickType_t move_until_tick_{0};

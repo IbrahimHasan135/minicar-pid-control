@@ -10,17 +10,12 @@ constexpr int ENCODER_TICKS_PER_REV = 1766;
 constexpr float MAX_LINEAR_SPEED_MPS = 1.0f;
 constexpr float MAX_WHEEL_SPEED_MPS = 1.2f;
 constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
-// Continuous PD trim applied directly to the right motor output after its
-// speed PID. This prevents a saturated speed loop from masking the heading
-// correction. The IMU output is quantized to 2 degrees, so there is no
-// additional angular deadband.
-// Hardware-tested direction: a positive drift slows the right wheel, while
-// a negative drift speeds it up, steering the car back toward zero.
-constexpr float STRAIGHT_HEADING_CORRECTION_SIGN = 1.0f;
-constexpr float STRAIGHT_HEADING_KP_OUTPUT_PER_DEG = 0.015f;
-constexpr float STRAIGHT_HEADING_KD_OUTPUT_PER_DPS = 0.001f;
-constexpr float STRAIGHT_HEADING_DAMPING_RATE_LIMIT_DPS = 30.0f;
-constexpr float STRAIGHT_HEADING_MAX_OUTPUT_TRIM = 0.25f;
+// The heading supervisor adjusts the right follower's speed target. The
+// right speed PID then produces the motor output, so the two controllers do
+// not fight each other. Positive error (target-current) speeds up the right
+// wheel and steers the differential drive toward increasing heading.
+constexpr float STRAIGHT_HEADING_KP_SPEED_PER_DEG = 0.004f;
+constexpr float STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS = 0.06f;
 constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
