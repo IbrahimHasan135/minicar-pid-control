@@ -31,7 +31,8 @@ constexpr MotorPeripheralConfig LEFT_MOTOR{
 };
 
 constexpr MotorPeripheralConfig RIGHT_MOTOR{
-    {GPIO_NUM_26, GPIO_NUM_25, GPIO_NUM_27, GPIO_NUM_13},
+    // GPIO27 and GPIO14 are adjacent on the standard ESP32 DevKit header.
+    {GPIO_NUM_26, GPIO_NUM_25, GPIO_NUM_27, GPIO_NUM_14},
     LEDC_CHANNEL_2,
     LEDC_CHANNEL_3,
     true,  // physical forward direction for the right motor
