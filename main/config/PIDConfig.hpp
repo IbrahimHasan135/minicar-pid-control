@@ -15,8 +15,12 @@ constexpr float SPEED_KD = 0.0f;
 constexpr float SPEED_FEED_FORWARD = 1.55f;
 constexpr float SPEED_FEEDBACK_FILTER_ALPHA = 0.35f;
 constexpr float SPEED_OUTPUT_SLEW_RATE = 2.5f;
+// Recover accumulated left/right travel mismatch caused by launch transients.
+// Units: speed correction (m/s) per meter of wheel-distance error.
+constexpr float ENCODER_SYNC_KP_PER_S = 0.40f;
+constexpr float ENCODER_SYNC_MAX_CORRECTION_MPS = 0.06f;
 // Left wheel is the speed master. The right wheel follows its measured speed,
-// with a bounded heading correction applied to the right speed target.
+// with bounded encoder-position and optional heading corrections.
 constexpr SpeedMaster SPEED_MASTER = SpeedMaster::LEFT;
 
 constexpr float HEADING_KP = 0.02f;

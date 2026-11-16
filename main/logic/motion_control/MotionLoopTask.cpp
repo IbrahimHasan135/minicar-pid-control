@@ -141,7 +141,11 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     previous_right_output_ = 0.0f;
     heading_error_deg_ = 0.0f;
     heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
     right_pid_target_mps_ = 0.0f;
+    move_start_left_ticks_ = motor_service_.getLeftTicks();
+    move_start_right_ticks_ = motor_service_.getRightTicks();
     feedback_filter_initialized_ = false;
     heading_service_.resetController();
 
@@ -327,6 +331,8 @@ void MotionLoopTask::stopAndIdle()
     previous_right_output_ = 0.0f;
     heading_error_deg_ = 0.0f;
     heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
     right_pid_target_mps_ = 0.0f;
     feedback_filter_initialized_ = false;
     context_.setIdle();
@@ -343,6 +349,8 @@ void MotionLoopTask::failSafeStop()
     previous_right_output_ = 0.0f;
     heading_error_deg_ = 0.0f;
     heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
     right_pid_target_mps_ = 0.0f;
     context_.setError();
 }
@@ -358,6 +366,9 @@ void MotionLoopTask::applySpeedControl(float dt_s)
         right_speed_pid_.reset();
         previous_left_output_ = 0.0f;
         previous_right_output_ = 0.0f;
+        right_pid_target_mps_ = 0.0f;
+        heading_speed_correction_mps_ = 0.0f;
+        encoder_sync_correction_mps_ = 0.0f;
         motor_service_.stopMotor();
         return;
     }
@@ -378,12 +389,31 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     float right_pid_target_mps = right_target_mps_;
     heading_error_deg_ = 0.0f;
     heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
     right_pid_target_mps_ = right_pid_target_mps;
     // Master/follower synchronization is only for straight-line motion.
     // During a turn, the two wheel targets must keep opposite signs.
     if (context_.snapshot().state == model::MotionState::MOVING) {
         if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
             right_pid_target_mps = filtered_left_speed_mps_;
+
+            constexpr float METERS_PER_TICK =
+                (config::robot::WHEEL_DIAMETER_M * 3.14159265358979323846f) /
+                static_cast<float>(config::robot::ENCODER_TICKS_PER_REV);
+            const int32_t left_delta_ticks =
+                motor_service_.getLeftTicks() - move_start_left_ticks_;
+            const int32_t right_delta_ticks =
+                motor_service_.getRightTicks() - move_start_right_ticks_;
+            const float travel_direction =
+                left_target_mps_ >= 0.0f ? 1.0f : -1.0f;
+            encoder_distance_error_m_ = travel_direction *
+                static_cast<float>(left_delta_ticks - right_delta_ticks) *
+                METERS_PER_TICK;
+            encoder_sync_correction_mps_ = travel_direction * std::clamp(
+                config::pid::ENCODER_SYNC_KP_PER_S * encoder_distance_error_m_,
+                -config::pid::ENCODER_SYNC_MAX_CORRECTION_MPS,
+                config::pid::ENCODER_SYNC_MAX_CORRECTION_MPS);
 
             // Cascade control: heading adjusts the right wheel speed target;
             // the right speed PID is the only controller that drives PWM.
@@ -405,11 +435,12 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                             damped_yaw_rate_dps,
                     -config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS,
                     config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS);
-                right_pid_target_mps = std::clamp(
-                    filtered_left_speed_mps_ + heading_speed_correction_mps_,
-                    0.0f,
-                    config::robot::MAX_WHEEL_SPEED_MPS);
             }
+            right_pid_target_mps = std::clamp(
+                filtered_left_speed_mps_ + encoder_sync_correction_mps_ +
+                    heading_speed_correction_mps_,
+                -config::robot::MAX_WHEEL_SPEED_MPS,
+                config::robot::MAX_WHEEL_SPEED_MPS);
             right_pid_target_mps_ = right_pid_target_mps;
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
@@ -469,6 +500,7 @@ void MotionLoopTask::publishTelemetry()
         kTag,
         "CTRL heading=%.2f target=%.2f error=%.2f yaw=%.1f "
         "speed_L/R=%.3f/%.3f right_target=%.3f heading_corr=%.3f "
+        "encoder_error=%.3f encoder_corr=%.3f "
         "output_L/R=%.3f/%.3f ticks_L/R=%ld/%ld distance=%.3f",
         static_cast<double>(heading_service_.getHeadingDeg()),
         static_cast<double>(snapshot.target_heading_deg),
@@ -478,6 +510,8 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(motor_service_.getRightVelocityMps()),
         static_cast<double>(right_pid_target_mps_),
         static_cast<double>(heading_speed_correction_mps_),
+        static_cast<double>(encoder_distance_error_m_),
+        static_cast<double>(encoder_sync_correction_mps_),
         static_cast<double>(previous_left_output_),
         static_cast<double>(previous_right_output_),
         static_cast<long>(motor_service_.getLeftTicks()),
