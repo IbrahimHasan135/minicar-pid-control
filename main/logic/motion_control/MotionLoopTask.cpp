@@ -438,17 +438,24 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     heading_service_.getHeadingDeg());
 
             if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
-                const float damped_yaw_rate_dps = std::clamp(
-                    heading_service_.getYawRateDps(),
-                    -config::robot::STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS,
-                    config::robot::STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS);
-                heading_speed_correction_mps_ = std::clamp(
-                    config::robot::STRAIGHT_HEADING_KP_SPEED_PER_DEG *
-                            heading_error_deg_ -
-                        config::robot::STRAIGHT_HEADING_KD_SPEED_PER_DPS *
-                            damped_yaw_rate_dps,
-                    -config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS,
-                    config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS);
+                const float absolute_heading_error =
+                    std::fabs(heading_error_deg_);
+                if (absolute_heading_error >
+                        config::robot::STRAIGHT_HEADING_DEADBAND_DEG &&
+                    absolute_heading_error <=
+                        config::robot::STRAIGHT_HEADING_VALID_ERROR_DEG) {
+                    const float damped_yaw_rate_dps = std::clamp(
+                        heading_service_.getYawRateDps(),
+                        -config::robot::STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS,
+                        config::robot::STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS);
+                    heading_speed_correction_mps_ = std::clamp(
+                        config::robot::STRAIGHT_HEADING_KP_SPEED_PER_DEG *
+                                heading_error_deg_ -
+                            config::robot::STRAIGHT_HEADING_KD_SPEED_PER_DPS *
+                                damped_yaw_rate_dps,
+                        -config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS,
+                        config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS);
+                }
             }
             right_pid_target_mps = std::clamp(
                 ramped_move_target_mps_ + encoder_sync_correction_mps_ +

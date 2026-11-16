@@ -15,13 +15,15 @@ constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
 // not fight each other. Positive error (target-current) speeds up the right
 // wheel and steers the differential drive toward increasing heading. The
 // yaw-rate term anticipates target crossing to prevent a late left overshoot.
-constexpr float STRAIGHT_HEADING_KP_SPEED_PER_DEG = 0.004f;
-constexpr float STRAIGHT_HEADING_KD_SPEED_PER_DPS = 0.0008f;
+constexpr float STRAIGHT_HEADING_KP_SPEED_PER_DEG = 0.0010f;
+constexpr float STRAIGHT_HEADING_KD_SPEED_PER_DPS = 0.0002f;
 constexpr float STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS = 30.0f;
-constexpr float STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS = 0.06f;
-// Encoder-only baseline test. Keep heading acquisition/logging active, but do
-// not let it alter either wheel until the master/follower drivetrain is tuned.
-constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = false;
+constexpr float STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS = 0.012f;
+constexpr float STRAIGHT_HEADING_DEADBAND_DEG = 1.0f;
+// Reject implausible magnetic-heading excursions instead of allowing them to
+// override the encoder controller. The observed physical drift is below 10 deg.
+constexpr float STRAIGHT_HEADING_VALID_ERROR_DEG = 15.0f;
+constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
 constexpr float MIN_TURN_OUTPUT = 0.12f;
