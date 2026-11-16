@@ -23,9 +23,9 @@ constexpr float MOVE_TARGET_ACCELERATION_MPS2 = 0.25f;
 constexpr float ENCODER_SYNC_KP_PER_S = 0.40f;
 constexpr float ENCODER_SYNC_MAX_CORRECTION_MPS = 0.06f;
 // The right drivetrain covers slightly less real distance per reported tick.
-// Ask it to lead the left encoder slightly to remove the remaining right
-// drift without causing a late left correction.
-constexpr float RIGHT_ENCODER_DISTANCE_LEAD_RATIO = 0.003f;
+// Keep only a very small right-wheel lead. A larger lead corrected the early
+// right drift but made the car turn slightly left during the last metre.
+constexpr float RIGHT_ENCODER_DISTANCE_LEAD_RATIO = 0.001f;
 // Left wheel is the reference. Both wheels receive the same ramped speed
 // target, while the right target gets bounded encoder-position and optional
 // heading corrections.
