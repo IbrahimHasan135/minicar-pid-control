@@ -19,6 +19,9 @@ constexpr float SPEED_OUTPUT_SLEW_RATE = 2.5f;
 // Units: speed correction (m/s) per meter of wheel-distance error.
 constexpr float ENCODER_SYNC_KP_PER_S = 0.40f;
 constexpr float ENCODER_SYNC_MAX_CORRECTION_MPS = 0.06f;
+// The right drivetrain covers slightly less real distance per reported tick.
+// Ask it to lead the left encoder by 0.4% to remove the remaining right drift.
+constexpr float RIGHT_ENCODER_DISTANCE_LEAD_RATIO = 0.004f;
 // Left wheel is the speed master. The right wheel follows its measured speed,
 // with bounded encoder-position and optional heading corrections.
 constexpr SpeedMaster SPEED_MASTER = SpeedMaster::LEFT;

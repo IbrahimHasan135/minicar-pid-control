@@ -407,8 +407,11 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                 motor_service_.getRightTicks() - move_start_right_ticks_;
             const float travel_direction =
                 left_target_mps_ >= 0.0f ? 1.0f : -1.0f;
+            const float desired_right_ticks =
+                static_cast<float>(left_delta_ticks) *
+                (1.0f + config::pid::RIGHT_ENCODER_DISTANCE_LEAD_RATIO);
             encoder_distance_error_m_ = travel_direction *
-                static_cast<float>(left_delta_ticks - right_delta_ticks) *
+                (desired_right_ticks - static_cast<float>(right_delta_ticks)) *
                 METERS_PER_TICK;
             encoder_sync_correction_mps_ = travel_direction * std::clamp(
                 config::pid::ENCODER_SYNC_KP_PER_S * encoder_distance_error_m_,
