@@ -13,8 +13,11 @@ constexpr float MAX_TURN_WHEEL_SPEED_MPS = 0.45f;
 // The heading supervisor adjusts the right follower's speed target. The
 // right speed PID then produces the motor output, so the two controllers do
 // not fight each other. Positive error (target-current) speeds up the right
-// wheel and steers the differential drive toward increasing heading.
+// wheel and steers the differential drive toward increasing heading. The
+// yaw-rate term anticipates target crossing to prevent a late left overshoot.
 constexpr float STRAIGHT_HEADING_KP_SPEED_PER_DEG = 0.004f;
+constexpr float STRAIGHT_HEADING_KD_SPEED_PER_DPS = 0.0008f;
+constexpr float STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS = 30.0f;
 constexpr float STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS = 0.06f;
 constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
