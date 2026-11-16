@@ -137,6 +137,7 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     right_speed_pid_.reset();
     filtered_left_speed_mps_ = 0.0f;
     filtered_right_speed_mps_ = 0.0f;
+    ramped_move_target_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     heading_error_deg_ = 0.0f;
@@ -327,6 +328,7 @@ void MotionLoopTask::stopAndIdle()
     right_speed_pid_.reset();
     filtered_left_speed_mps_ = 0.0f;
     filtered_right_speed_mps_ = 0.0f;
+    ramped_move_target_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     heading_error_deg_ = 0.0f;
@@ -345,6 +347,7 @@ void MotionLoopTask::failSafeStop()
     motor_service_.stopMotor();
     left_speed_pid_.reset();
     right_speed_pid_.reset();
+    ramped_move_target_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
     heading_error_deg_ = 0.0f;
@@ -364,6 +367,7 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     if (std::fabs(left_target_mps_) <= 0.001f && std::fabs(right_target_mps_) <= 0.001f) {
         left_speed_pid_.reset();
         right_speed_pid_.reset();
+        ramped_move_target_mps_ = 0.0f;
         previous_left_output_ = 0.0f;
         previous_right_output_ = 0.0f;
         right_pid_target_mps_ = 0.0f;
@@ -395,9 +399,16 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     // Master/follower synchronization is only for straight-line motion.
     // During a turn, the two wheel targets must keep opposite signs.
     if (context_.snapshot().state == model::MotionState::MOVING) {
-        if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
-            right_pid_target_mps = filtered_left_speed_mps_;
+        const float max_target_step =
+            config::pid::MOVE_TARGET_ACCELERATION_MPS2 * dt_s;
+        ramped_move_target_mps_ += std::clamp(
+            left_target_mps_ - ramped_move_target_mps_,
+            -max_target_step,
+            max_target_step);
+        left_pid_target_mps = ramped_move_target_mps_;
+        right_pid_target_mps = ramped_move_target_mps_;
 
+        if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
             constexpr float METERS_PER_TICK =
                 (config::robot::WHEEL_DIAMETER_M * 3.14159265358979323846f) /
                 static_cast<float>(config::robot::ENCODER_TICKS_PER_REV);
@@ -440,7 +451,7 @@ void MotionLoopTask::applySpeedControl(float dt_s)
                     config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS);
             }
             right_pid_target_mps = std::clamp(
-                filtered_left_speed_mps_ + encoder_sync_correction_mps_ +
+                ramped_move_target_mps_ + encoder_sync_correction_mps_ +
                     heading_speed_correction_mps_,
                 -config::robot::MAX_WHEEL_SPEED_MPS,
                 config::robot::MAX_WHEEL_SPEED_MPS);
@@ -502,7 +513,7 @@ void MotionLoopTask::publishTelemetry()
     ESP_LOGI(
         kTag,
         "CTRL heading=%.2f target=%.2f error=%.2f yaw=%.1f "
-        "speed_L/R=%.3f/%.3f right_target=%.3f heading_corr=%.3f "
+        "speed_L/R=%.3f/%.3f move_target=%.3f right_target=%.3f heading_corr=%.3f "
         "encoder_error=%.3f encoder_corr=%.3f "
         "output_L/R=%.3f/%.3f ticks_L/R=%ld/%ld distance=%.3f",
         static_cast<double>(heading_service_.getHeadingDeg()),
@@ -511,6 +522,7 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(heading_service_.getYawRateDps()),
         static_cast<double>(motor_service_.getLeftVelocityMps()),
         static_cast<double>(motor_service_.getRightVelocityMps()),
+        static_cast<double>(ramped_move_target_mps_),
         static_cast<double>(right_pid_target_mps_),
         static_cast<double>(heading_speed_correction_mps_),
         static_cast<double>(encoder_distance_error_m_),

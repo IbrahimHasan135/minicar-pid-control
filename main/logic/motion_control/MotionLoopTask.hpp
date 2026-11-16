@@ -62,6 +62,7 @@ private:
     float right_target_mps_{0.0f};
     float filtered_left_speed_mps_{0.0f};
     float filtered_right_speed_mps_{0.0f};
+    float ramped_move_target_mps_{0.0f};
     float previous_left_output_{0.0f};
     float previous_right_output_{0.0f};
     float heading_error_deg_{0.0f};
