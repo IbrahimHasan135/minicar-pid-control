@@ -469,7 +469,7 @@ void MotionLoopTask::publishTelemetry()
         kTag,
         "CTRL heading=%.2f target=%.2f error=%.2f yaw=%.1f "
         "speed_L/R=%.3f/%.3f right_target=%.3f heading_corr=%.3f "
-        "output_L/R=%.3f/%.3f distance=%.3f",
+        "output_L/R=%.3f/%.3f ticks_L/R=%ld/%ld distance=%.3f",
         static_cast<double>(heading_service_.getHeadingDeg()),
         static_cast<double>(snapshot.target_heading_deg),
         static_cast<double>(heading_error_deg_),
@@ -480,6 +480,8 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(heading_speed_correction_mps_),
         static_cast<double>(previous_left_output_),
         static_cast<double>(previous_right_output_),
+        static_cast<long>(motor_service_.getLeftTicks()),
+        static_cast<long>(motor_service_.getRightTicks()),
         static_cast<double>(odometry_service_.getTravelledDistanceM()));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();

@@ -19,7 +19,9 @@ constexpr float STRAIGHT_HEADING_KP_SPEED_PER_DEG = 0.004f;
 constexpr float STRAIGHT_HEADING_KD_SPEED_PER_DPS = 0.0008f;
 constexpr float STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS = 30.0f;
 constexpr float STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS = 0.06f;
-constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = true;
+// Encoder-only baseline test. Keep heading acquisition/logging active, but do
+// not let it alter either wheel until the master/follower drivetrain is tuned.
+constexpr bool ENABLE_STRAIGHT_IMU_CORRECTION = false;
 constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
 constexpr float MIN_TURN_OUTPUT = 0.12f;
