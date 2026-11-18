@@ -160,9 +160,9 @@ extern "C" void app_main(void)
 
     publishStartupTelemetry(
         telemetry_queue,
-        "continuous heading control test: forward 3 m; UART-to-MQTT active");
-    if (!application::Mission::enqueueImuDiagnosticMission(motion_queue)) {
-        ESP_LOGE(TAG, "failed to enqueue heading-control test mission");
+        "single turn test: stationary right turn 90 deg; UART-to-MQTT active");
+    if (!application::Mission::enqueueSingleTurnTestMission(motion_queue)) {
+        ESP_LOGE(TAG, "failed to enqueue single-turn test mission");
         motor_service.stopMotor();
     }
 }

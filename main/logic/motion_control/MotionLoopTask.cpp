@@ -185,10 +185,33 @@ void MotionLoopTask::startTurn(const model::MotionCommand& command)
     left_speed_pid_.reset();
     right_speed_pid_.reset();
     heading_service_.resetController();
+    previous_left_output_ = 0.0f;
+    previous_right_output_ = 0.0f;
+    heading_error_deg_ = 0.0f;
     turn_direction_ = (command.value >= 0.0f) ? 1.0f : -1.0f;
+    turn_target_angle_deg_ = std::fabs(command.value);
+    turn_raw_progress_deg_ = 0.0f;
+    turn_progress_deg_ = 0.0f;
+    turn_remaining_deg_ = turn_target_angle_deg_;
+    turn_sync_output_ = 0.0f;
+    turn_start_left_ticks_ = motor_service_.getLeftTicks();
+    turn_start_right_ticks_ = motor_service_.getRightTicks();
 
+    const float start_heading_deg = heading_service_.getHeadingDeg();
+    // Positive turn commands are defined as a physical right turn. On this
+    // drivetrain/IMU installation a right turn decreases magnetic heading.
     const float target_heading_deg = service::HeadingService::normalizeAngleDeg(
-        heading_service_.getHeadingDeg() + command.value);
+        start_heading_deg - command.value);
+    turn_until_tick_ = xTaskGetTickCount() +
+        pdMS_TO_TICKS(config::robot::TURN_TIMEOUT_MS);
+
+    ESP_LOGI(
+        kTag,
+        "turn started: angle=%.1f start=%.2f target=%.2f timeout=%lu ms",
+        static_cast<double>(command.value),
+        static_cast<double>(start_heading_deg),
+        static_cast<double>(target_heading_deg),
+        static_cast<unsigned long>(config::robot::TURN_TIMEOUT_MS));
 
     context_.beginTurn(command.value, target_heading_deg);
 }
@@ -290,14 +313,59 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
     const float angle_error_deg = service::HeadingService::shortestAngleErrorDeg(
         snapshot.target_heading_deg,
         heading_service_.getHeadingDeg());
+    heading_error_deg_ = angle_error_deg;
 
-    const float remaining_angle_deg = turn_direction_ * angle_error_deg;
-    // Stop slightly before the exact target to account for drivetrain inertia.
-    // Never reverse to correct overshoot during this turn test.
-    if (remaining_angle_deg <= config::robot::TURN_ANGLE_TOLERANCE_DEG) {
+    constexpr float PI = 3.14159265358979323846f;
+    constexpr float METERS_PER_TICK =
+        (config::robot::WHEEL_DIAMETER_M * PI) /
+        static_cast<float>(config::robot::ENCODER_TICKS_PER_REV);
+    const int32_t left_turn_ticks = std::abs(
+        motor_service_.getLeftTicks() - turn_start_left_ticks_);
+    const int32_t right_turn_ticks = std::abs(
+        motor_service_.getRightTicks() - turn_start_right_ticks_);
+    const float left_turn_distance_m =
+        static_cast<float>(left_turn_ticks) * METERS_PER_TICK;
+    const float right_turn_distance_m =
+        static_cast<float>(right_turn_ticks) * METERS_PER_TICK;
+    const float average_wheel_arc_m =
+        0.5f * (left_turn_distance_m + right_turn_distance_m);
+    turn_raw_progress_deg_ = average_wheel_arc_m /
+        (config::robot::WHEEL_BASE_M * 0.5f) * (180.0f / PI);
+    turn_progress_deg_ = turn_raw_progress_deg_ /
+        config::robot::TURN_ENCODER_ARC_MULTIPLIER;
+    turn_remaining_deg_ = std::max(
+        0.0f, turn_target_angle_deg_ - turn_progress_deg_);
+
+    if (static_cast<int32_t>(xTaskGetTickCount() - turn_until_tick_) >= 0) {
+        motor_service_.stopMotor();
+        ESP_LOGE(
+            kTag,
+            "turn timeout: target=%.2f heading=%.2f error=%.2f",
+            static_cast<double>(snapshot.target_heading_deg),
+            static_cast<double>(heading_service_.getHeadingDeg()),
+            static_cast<double>(angle_error_deg));
+        failSafeStop();
+        return;
+    }
+
+    // Encoder wheel arc is the primary completion condition. IMU heading stays
+    // available as an independent diagnostic and cannot cause a full rotation.
+    if (turn_remaining_deg_ <= config::robot::TURN_ANGLE_TOLERANCE_DEG) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
+        previous_left_output_ = 0.0f;
+        previous_right_output_ = 0.0f;
+        ESP_LOGI(
+            kTag,
+            "turn target reached: encoder_angle=%.2f target_angle=%.2f "
+            "heading_target=%.2f heading=%.2f heading_error=%.2f yaw=%.2f",
+            static_cast<double>(turn_progress_deg_),
+            static_cast<double>(turn_target_angle_deg_),
+            static_cast<double>(snapshot.target_heading_deg),
+            static_cast<double>(heading_service_.getHeadingDeg()),
+            static_cast<double>(angle_error_deg),
+            static_cast<double>(heading_service_.getYawRateDps()));
         context_.setCompleted();
         return;
     }
@@ -307,11 +375,25 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
     (void)dt_s;
     const float turn_output = std::clamp(
         config::robot::OPEN_LOOP_TURN_OUTPUT *
-            (remaining_angle_deg / config::robot::TURN_SLOWDOWN_ANGLE_DEG),
+            (turn_remaining_deg_ / config::robot::TURN_SLOWDOWN_ANGLE_DEG),
         config::robot::MIN_TURN_OUTPUT,
         config::robot::OPEN_LOOP_TURN_OUTPUT);
-    const float left_output = turn_direction_ * turn_output;
-    const float right_output = -left_output;
+    const float turn_tick_error =
+        static_cast<float>(left_turn_ticks - right_turn_ticks);
+    turn_sync_output_ = std::clamp(
+        config::robot::TURN_SYNC_OUTPUT_PER_TICK * turn_tick_error,
+        -config::robot::TURN_SYNC_MAX_OUTPUT,
+        config::robot::TURN_SYNC_MAX_OUTPUT);
+    const float left_output_magnitude = std::clamp(
+        turn_output - turn_sync_output_,
+        config::robot::TURN_MIN_WHEEL_OUTPUT,
+        config::robot::TURN_MAX_WHEEL_OUTPUT);
+    const float right_output_magnitude = std::clamp(
+        turn_output + turn_sync_output_,
+        config::robot::TURN_MIN_WHEEL_OUTPUT,
+        config::robot::TURN_MAX_WHEEL_OUTPUT);
+    const float left_output = turn_direction_ * left_output_magnitude;
+    const float right_output = -turn_direction_ * right_output_magnitude;
     left_target_mps_ = turn_direction_;
     right_target_mps_ = -turn_direction_;
     previous_left_output_ = left_output;
@@ -520,6 +602,7 @@ void MotionLoopTask::publishTelemetry()
     ESP_LOGI(
         kTag,
         "CTRL heading=%.2f target=%.2f error=%.2f yaw=%.1f "
+        "turn_raw=%.1f turn_progress=%.1f turn_remaining=%.1f turn_sync=%.3f "
         "speed_L/R=%.3f/%.3f move_target=%.3f right_target=%.3f heading_corr=%.3f "
         "encoder_error=%.3f encoder_corr=%.3f "
         "output_L/R=%.3f/%.3f ticks_L/R=%ld/%ld distance=%.3f",
@@ -527,6 +610,10 @@ void MotionLoopTask::publishTelemetry()
         static_cast<double>(snapshot.target_heading_deg),
         static_cast<double>(heading_error_deg_),
         static_cast<double>(heading_service_.getYawRateDps()),
+        static_cast<double>(turn_raw_progress_deg_),
+        static_cast<double>(turn_progress_deg_),
+        static_cast<double>(turn_remaining_deg_),
+        static_cast<double>(turn_sync_output_),
         static_cast<double>(motor_service_.getLeftVelocityMps()),
         static_cast<double>(motor_service_.getRightVelocityMps()),
         static_cast<double>(ramped_move_target_mps_),

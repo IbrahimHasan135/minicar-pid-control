@@ -28,6 +28,16 @@ constexpr uint32_t IMU_DIAGNOSTIC_MQTT_QUEUE_LENGTH = 64;
 constexpr float OPEN_LOOP_TURN_OUTPUT = 0.35f;
 constexpr float MIN_TURN_OUTPUT = 0.12f;
 constexpr float TURN_SLOWDOWN_ANGLE_DEG = 35.0f;
+// Bench/track calibration: the ideal wheel-geometry estimate reported roughly
+// twice the physical rotation. Require 1.9x the ideal wheel arc for a turn.
+constexpr float TURN_ENCODER_ARC_MULTIPLIER = 1.90f;
+// Balance the two wheel arcs while turning. The right drivetrain needs more
+// output at low speed and otherwise stalls before the left wheel.
+constexpr float TURN_SYNC_OUTPUT_PER_TICK = 0.00015f;
+constexpr float TURN_SYNC_MAX_OUTPUT = 0.08f;
+constexpr float TURN_MIN_WHEEL_OUTPUT = 0.08f;
+constexpr float TURN_MAX_WHEEL_OUTPUT = 0.43f;
+constexpr uint32_t TURN_TIMEOUT_MS = 10000;
 constexpr float MAX_MOTOR_OUTPUT = 1.0f;
 constexpr float MIN_MOTOR_OUTPUT = -1.0f;
 

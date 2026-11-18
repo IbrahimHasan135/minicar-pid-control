@@ -37,6 +37,12 @@ bool Mission::pushEncoderDemoMission(QueueHandle_t motion_queue)
            pushStop(motion_queue);
 }
 
+bool Mission::enqueueSingleTurnTestMission(QueueHandle_t motion_queue)
+{
+    constexpr float RIGHT_TURN_DEG = 90.0f;
+    return pushTurn(motion_queue, RIGHT_TURN_DEG);
+}
+
 bool Mission::enqueueTurnTestMission(QueueHandle_t motion_queue)
 {
     return pushTurn(motion_queue, 90.0f) &&

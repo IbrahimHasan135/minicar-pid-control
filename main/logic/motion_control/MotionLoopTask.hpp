@@ -72,9 +72,17 @@ private:
     float right_pid_target_mps_{0.0f};
     int32_t move_start_left_ticks_{0};
     int32_t move_start_right_ticks_{0};
+    int32_t turn_start_left_ticks_{0};
+    int32_t turn_start_right_ticks_{0};
+    float turn_target_angle_deg_{0.0f};
+    float turn_raw_progress_deg_{0.0f};
+    float turn_progress_deg_{0.0f};
+    float turn_remaining_deg_{0.0f};
+    float turn_sync_output_{0.0f};
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
     TickType_t move_until_tick_{0};
+    TickType_t turn_until_tick_{0};
     TickType_t wait_until_tick_{0};
     float turn_direction_{1.0f};
 };

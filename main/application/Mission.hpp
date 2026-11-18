@@ -11,6 +11,7 @@ public:
     static bool enqueueInitialTestMission(QueueHandle_t motion_queue);
     static bool enqueueDemoMission(QueueHandle_t motion_queue);
     static bool pushEncoderDemoMission(QueueHandle_t motion_queue);
+    static bool enqueueSingleTurnTestMission(QueueHandle_t motion_queue);
     static bool enqueueTurnTestMission(QueueHandle_t motion_queue);
     static bool enqueueSquareMission(QueueHandle_t motion_queue);
 
