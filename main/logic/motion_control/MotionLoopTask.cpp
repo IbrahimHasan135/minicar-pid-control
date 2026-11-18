@@ -6,6 +6,8 @@
 #include <cstring>
 
 #include "config/FreeRTOSConfig.hpp"
+#include "config/ExperimentConfig.hpp"
+#include "config/NavigationSerialConfig.hpp"
 #include "config/PIDConfig.hpp"
 #include "config/RobotConfig.hpp"
 #include "esp_log.h"
@@ -21,12 +23,14 @@ MotionLoopTask::MotionLoopTask(
     service::MotorControlService& motor_service,
     service::HeadingService& heading_service,
     service::OdometryService& odometry_service,
+    service::RgbcSampleStore& rgbc_sample_store,
     QueueHandle_t telemetry_queue,
     logic::MqttPublishEventQueue& mqtt_publish_queue)
     : context_(context),
       motor_service_(motor_service),
       heading_service_(heading_service),
       odometry_service_(odometry_service),
+      rgbc_sample_store_(rgbc_sample_store),
       telemetry_queue_(telemetry_queue),
       mqtt_publish_queue_(mqtt_publish_queue),
       left_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
@@ -149,6 +153,12 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     move_start_right_ticks_ = motor_service_.getRightTicks();
     feedback_filter_initialized_ = false;
     heading_service_.resetController();
+    ++rgbc_run_id_;
+    rgbc_samples_queued_ = 0;
+    next_rgbc_sample_distance_m_ =
+        config::experiment::RGBC_SAMPLE_SPACING_M;
+    rgbc_experiment_active_ = command.value > 0.0f;
+    last_rgbc_wait_log_tick_ = 0;
 
     const float speed_mps = std::clamp(
         std::fabs(command.speed),
@@ -276,6 +286,7 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
     const float travelled_distance_m = std::fabs(
         odometry_service_.getTravelledDistanceM() - snapshot.start_distance_m);
     const float target_distance_m = std::fabs(snapshot.target_distance_m);
+    publishRgbcDistanceSamples(travelled_distance_m, target_distance_m);
     if (travelled_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M >=
         target_distance_m) {
         left_target_mps_ = 0.0f;
@@ -284,6 +295,7 @@ void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_
         ESP_LOGI(kTag, "encoder distance target reached: travelled=%.3f target=%.3f",
                  static_cast<double>(travelled_distance_m),
                  static_cast<double>(target_distance_m));
+        publishRgbcSessionComplete(travelled_distance_m);
         context_.setCompleted();
         return;
     }
@@ -571,6 +583,135 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     previous_right_output_ = clamped_right_output;
     motor_service_.setMotorOutputs(
         clamped_left_output, clamped_right_output);
+}
+
+void MotionLoopTask::publishRgbcDistanceSamples(
+    float travelled_distance_m,
+    float target_distance_m)
+{
+    if (!rgbc_experiment_active_ ||
+        next_rgbc_sample_distance_m_ >
+            target_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M ||
+        travelled_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M <
+            next_rgbc_sample_distance_m_) {
+        return;
+    }
+
+    model::NavigationSample sample{};
+    const std::uint32_t now_ms = static_cast<std::uint32_t>(
+        xTaskGetTickCount() * portTICK_PERIOD_MS);
+    const bool sample_available = rgbc_sample_store_.latest(sample);
+    const bool sample_fresh = sample_available &&
+        (now_ms - sample.received_at_ms) <=
+            config::experiment::RGBC_MAX_SAMPLE_AGE_MS;
+    const bool values_valid = sample_fresh &&
+        sample.values[0].valid && sample.values[1].valid &&
+        sample.values[2].valid && sample.values[3].valid;
+    if (!values_valid) {
+        const TickType_t now_tick = xTaskGetTickCount();
+        if ((now_tick - last_rgbc_wait_log_tick_) >= pdMS_TO_TICKS(500)) {
+            ESP_LOGW(
+                kTag,
+                "RGBC milestone %.1f m waiting for a fresh serial sample",
+                static_cast<double>(next_rgbc_sample_distance_m_));
+            last_rgbc_wait_log_tick_ = now_tick;
+        }
+        return;
+    }
+
+    const float rounded_meter = std::round(next_rgbc_sample_distance_m_);
+    const bool is_meter_checkpoint =
+        rounded_meter >= 1.0f && rounded_meter <= 3.0f &&
+        std::fabs(next_rgbc_sample_distance_m_ - rounded_meter) < 0.01f;
+    char checkpoint[12]{};
+    if (is_meter_checkpoint) {
+        std::snprintf(
+            checkpoint,
+            sizeof(checkpoint),
+            "%u",
+            static_cast<unsigned>(rounded_meter));
+    } else {
+        std::snprintf(checkpoint, sizeof(checkpoint), "null");
+    }
+
+    char payload[512]{};
+    const int payload_length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"type\":\"rgbc_measurement\",\"run_id\":%lu,"
+        "\"speed_profile\":\"%s\",\"target_speed_mps\":%.3f,"
+        "\"actual_speed_mps\":%.3f,\"distance_m\":%.1f,"
+        "\"actual_distance_m\":%.3f,\"checkpoint_meter\":%s,"
+        "\"R\":%.3f,\"G\":%.3f,\"B\":%.3f,\"C\":%.3f,"
+        "\"sample_age_ms\":%lu}",
+        static_cast<unsigned long>(rgbc_run_id_),
+        config::experiment::activeProfileName(),
+        static_cast<double>(config::experiment::activeSpeedMps()),
+        static_cast<double>(motor_service_.getAverageSpeedMps()),
+        static_cast<double>(next_rgbc_sample_distance_m_),
+        static_cast<double>(travelled_distance_m),
+        checkpoint,
+        sample.values[0].value,
+        sample.values[1].value,
+        sample.values[2].value,
+        sample.values[3].value,
+        static_cast<unsigned long>(now_ms - sample.received_at_ms));
+    if (payload_length <= 0 ||
+        static_cast<std::size_t>(payload_length) >= sizeof(payload)) {
+        ESP_LOGE(kTag, "RGBC milestone JSON formatting failed");
+        return;
+    }
+
+    if (!mqtt_publish_queue_.pushJson(
+            config::navigation_serial::MQTT_NAVIGATION_TOPIC,
+            payload,
+            0)) {
+        ESP_LOGW(kTag, "RGBC milestone MQTT queue full; retrying");
+        return;
+    }
+
+    ++rgbc_samples_queued_;
+    ESP_LOGI(
+        kTag,
+        "RGBC milestone queued %u: planned=%.1f m actual=%.3f m payload=%s",
+        static_cast<unsigned>(rgbc_samples_queued_),
+        static_cast<double>(next_rgbc_sample_distance_m_),
+        static_cast<double>(travelled_distance_m),
+        payload);
+    next_rgbc_sample_distance_m_ +=
+        config::experiment::RGBC_SAMPLE_SPACING_M;
+}
+
+void MotionLoopTask::publishRgbcSessionComplete(float travelled_distance_m)
+{
+    if (!rgbc_experiment_active_) {
+        return;
+    }
+
+    char payload[256]{};
+    const int payload_length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"type\":\"session\",\"status\":\"complete\","
+        "\"run_id\":%lu,\"speed_profile\":\"%s\","
+        "\"target_speed_mps\":%.3f,\"distance_m\":%.3f,"
+        "\"samples_sent\":%u}",
+        static_cast<unsigned long>(rgbc_run_id_),
+        config::experiment::activeProfileName(),
+        static_cast<double>(config::experiment::activeSpeedMps()),
+        static_cast<double>(travelled_distance_m),
+        static_cast<unsigned>(rgbc_samples_queued_));
+    if (payload_length > 0 &&
+        static_cast<std::size_t>(payload_length) < sizeof(payload) &&
+        mqtt_publish_queue_.pushJson(
+            config::navigation_serial::MQTT_NAVIGATION_TOPIC,
+            payload,
+            0)) {
+        ESP_LOGI(kTag, "RGBC experiment complete: payload=%s", payload);
+    } else {
+        ESP_LOGW(kTag, "RGBC session marker could not be queued");
+    }
+    rgbc_experiment_active_ = false;
 }
 
 void MotionLoopTask::publishTelemetry()

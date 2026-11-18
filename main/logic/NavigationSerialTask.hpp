@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "logic/communication/MqttPublishEventQueue.hpp"
 #include "service/navigation/NavigationSerialService.hpp"
+#include "service/navigation/RgbcSampleStore.hpp"
 
 namespace minicar::logic {
 
@@ -14,6 +15,7 @@ class NavigationSerialTask {
 public:
     explicit NavigationSerialTask(
         service::NavigationSerialService& navigation_service,
+        service::RgbcSampleStore& rgbc_sample_store,
         MqttPublishEventQueue& mqtt_publish_queue);
 
     esp_err_t init();
@@ -31,6 +33,7 @@ private:
     void publishNavigationSample(const model::NavigationSample& sample);
 
     service::NavigationSerialService& navigation_service_;
+    service::RgbcSampleStore& rgbc_sample_store_;
     MqttPublishEventQueue& mqtt_publish_queue_;
     StreamBufferHandle_t stream_buffer_{nullptr};
     std::uint32_t last_mqtt_publish_ms_{0};

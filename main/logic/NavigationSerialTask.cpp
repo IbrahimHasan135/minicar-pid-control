@@ -28,8 +28,10 @@ void valueToText(const model::NavigationValue& value,
 
 NavigationSerialTask::NavigationSerialTask(
     service::NavigationSerialService& navigation_service,
+    service::RgbcSampleStore& rgbc_sample_store,
     MqttPublishEventQueue& mqtt_publish_queue)
     : navigation_service_(navigation_service),
+      rgbc_sample_store_(rgbc_sample_store),
       mqtt_publish_queue_(mqtt_publish_queue)
 {
 }
@@ -174,11 +176,12 @@ void NavigationSerialTask::consumeByte(char byte,
     if (navigation_service_.parseJsonLine(frame, sample)) {
         if (sample.type == model::NavigationSampleType::RGBC) {
             ESP_LOGI(kTag, "valid RGBC serial sample");
+            rgbc_sample_store_.update(sample);
         } else {
             ESP_LOGI(kTag, "valid RF serial sample: routers=%u",
                      static_cast<unsigned>(sample.router_count));
+            publishNavigationSample(sample);
         }
-        publishNavigationSample(sample);
     } else {
         ESP_LOGW(kTag, "invalid navigation JSON rejected");
     }

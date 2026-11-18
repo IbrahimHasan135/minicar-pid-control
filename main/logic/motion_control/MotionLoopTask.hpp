@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -11,6 +13,7 @@
 #include "service/heading/HeadingService.hpp"
 #include "service/motor/MotorControlService.hpp"
 #include "service/odometry/OdometryService.hpp"
+#include "service/navigation/RgbcSampleStore.hpp"
 
 namespace minicar::logic::motion_control {
 
@@ -21,6 +24,7 @@ public:
         service::MotorControlService& motor_service,
         service::HeadingService& heading_service,
         service::OdometryService& odometry_service,
+        service::RgbcSampleStore& rgbc_sample_store,
         QueueHandle_t telemetry_queue,
         logic::MqttPublishEventQueue& mqtt_publish_queue);
 
@@ -43,6 +47,9 @@ private:
     void stopAndIdle();
     void failSafeStop();
     void applySpeedControl(float dt_s);
+    void publishRgbcDistanceSamples(float travelled_distance_m,
+                                    float target_distance_m);
+    void publishRgbcSessionComplete(float travelled_distance_m);
     void publishTelemetry();
 
     bool servicesReady() const;
@@ -54,6 +61,7 @@ private:
     service::MotorControlService& motor_service_;
     service::HeadingService& heading_service_;
     service::OdometryService& odometry_service_;
+    service::RgbcSampleStore& rgbc_sample_store_;
     QueueHandle_t telemetry_queue_{nullptr};
     logic::MqttPublishEventQueue& mqtt_publish_queue_;
     service::PIDController left_speed_pid_;
@@ -79,6 +87,11 @@ private:
     float turn_progress_deg_{0.0f};
     float turn_remaining_deg_{0.0f};
     float turn_sync_output_{0.0f};
+    float next_rgbc_sample_distance_m_{0.0f};
+    std::uint32_t rgbc_run_id_{0};
+    std::uint8_t rgbc_samples_queued_{0};
+    bool rgbc_experiment_active_{false};
+    TickType_t last_rgbc_wait_log_tick_{0};
     bool feedback_filter_initialized_{false};
     TickType_t last_telemetry_tick_{0};
     TickType_t move_until_tick_{0};

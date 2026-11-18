@@ -7,6 +7,7 @@ namespace minicar::application {
 
 class Mission {
 public:
+    static bool enqueueRgbcExperimentMission(QueueHandle_t motion_queue);
     static bool enqueueImuDiagnosticMission(QueueHandle_t motion_queue);
     static bool enqueueInitialTestMission(QueueHandle_t motion_queue);
     static bool enqueueDemoMission(QueueHandle_t motion_queue);

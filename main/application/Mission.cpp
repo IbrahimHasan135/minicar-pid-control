@@ -1,8 +1,20 @@
 #include "application/Mission.hpp"
 
+#include "config/ExperimentConfig.hpp"
 #include "model/MotionCommand.hpp"
 
 namespace minicar::application {
+
+bool Mission::enqueueRgbcExperimentMission(QueueHandle_t motion_queue)
+{
+    return pushWait(
+               motion_queue,
+               config::experiment::RGBC_WARMUP_SECONDS) &&
+           pushMove(
+               motion_queue,
+               config::experiment::RUN_DISTANCE_M,
+               config::experiment::activeSpeedMps());
+}
 
 bool Mission::enqueueImuDiagnosticMission(QueueHandle_t motion_queue)
 {

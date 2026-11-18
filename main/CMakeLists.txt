@@ -26,6 +26,7 @@ idf_component_register(
         "service/heading/HeadingService.cpp"
         "service/motor/MotorControlService.cpp"
         "service/navigation/NavigationSerialService.cpp"
+        "service/navigation/RgbcSampleStore.cpp"
         "service/odometry/OdometryService.cpp"
         "service/telemetry/TelemetryService.cpp"
     INCLUDE_DIRS

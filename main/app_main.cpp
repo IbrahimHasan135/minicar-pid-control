@@ -33,6 +33,7 @@
 #include "service/configuration/NetworkSettingsService.hpp"
 #include "service/motor/MotorControlService.hpp"
 #include "service/navigation/NavigationSerialService.hpp"
+#include "service/navigation/RgbcSampleStore.hpp"
 #include "service/odometry/OdometryService.hpp"
 #include "service/telemetry/TelemetryService.hpp"
 
@@ -77,6 +78,7 @@ extern "C" void app_main(void)
     static service::TelemetryService telemetry_service(console_driver);
     static service::NavigationSerialService navigation_serial_service(
         navigation_serial_driver);
+    static service::RgbcSampleStore rgbc_sample_store;
     static service::WifiService wifi_service(
         wifi_driver, network_settings.wifi_ssid, network_settings.wifi_password,
         config::network::PROVISIONING_AP_SSID,
@@ -126,10 +128,11 @@ extern "C" void app_main(void)
         motion_queue, motion_context);
     static logic::motion_control::MotionLoopTask motion_loop_task(
         motion_context, motor_service, heading_service, odometry_service,
+        rgbc_sample_store,
         telemetry_queue, mqtt_publish_queue);
     static logic::TelemetryTask telemetry_task(telemetry_queue, telemetry_service);
     static logic::NavigationSerialTask navigation_serial_task(
-        navigation_serial_service, mqtt_publish_queue);
+        navigation_serial_service, rgbc_sample_store, mqtt_publish_queue);
     if (navigation_serial_task.init() != ESP_OK) {
         ESP_LOGE(TAG, "navigation StreamBuffer creation failed");
         motor_service.stopMotor();
@@ -160,9 +163,9 @@ extern "C" void app_main(void)
 
     publishStartupTelemetry(
         telemetry_queue,
-        "continuous heading control test: forward 3 m; UART-to-MQTT active");
-    if (!application::Mission::enqueueImuDiagnosticMission(motion_queue)) {
-        ESP_LOGE(TAG, "failed to enqueue heading-control test mission");
+        "RGBC experiment: selected speed profile, 3 m, samples every 0.2 m");
+    if (!application::Mission::enqueueRgbcExperimentMission(motion_queue)) {
+        ESP_LOGE(TAG, "failed to enqueue RGBC experiment mission");
         motor_service.stopMotor();
     }
 }
