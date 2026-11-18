@@ -607,18 +607,6 @@ void MotionLoopTask::publishRgbcDistanceSamples(
     const bool values_valid = sample_fresh &&
         sample.values[0].valid && sample.values[1].valid &&
         sample.values[2].valid && sample.values[3].valid;
-    if (!values_valid) {
-        const TickType_t now_tick = xTaskGetTickCount();
-        if ((now_tick - last_rgbc_wait_log_tick_) >= pdMS_TO_TICKS(500)) {
-            ESP_LOGW(
-                kTag,
-                "RGBC milestone %.1f m waiting for a fresh serial sample",
-                static_cast<double>(next_rgbc_sample_distance_m_));
-            last_rgbc_wait_log_tick_ = now_tick;
-        }
-        return;
-    }
-
     const float rounded_meter = std::round(next_rgbc_sample_distance_m_);
     const bool is_meter_checkpoint =
         rounded_meter >= 1.0f && rounded_meter <= 3.0f &&
@@ -635,27 +623,44 @@ void MotionLoopTask::publishRgbcDistanceSamples(
     }
 
     char payload[512]{};
-    const int payload_length = std::snprintf(
-        payload,
-        sizeof(payload),
-        "{\"type\":\"rgbc_measurement\",\"run_id\":%lu,"
-        "\"speed_profile\":\"%s\",\"target_speed_mps\":%.3f,"
-        "\"actual_speed_mps\":%.3f,\"distance_m\":%.1f,"
-        "\"actual_distance_m\":%.3f,\"checkpoint_meter\":%s,"
-        "\"R\":%.3f,\"G\":%.3f,\"B\":%.3f,\"C\":%.3f,"
-        "\"sample_age_ms\":%lu}",
-        static_cast<unsigned long>(rgbc_run_id_),
-        config::experiment::activeProfileName(),
-        static_cast<double>(config::experiment::activeSpeedMps()),
-        static_cast<double>(motor_service_.getAverageSpeedMps()),
-        static_cast<double>(next_rgbc_sample_distance_m_),
-        static_cast<double>(travelled_distance_m),
-        checkpoint,
-        sample.values[0].value,
-        sample.values[1].value,
-        sample.values[2].value,
-        sample.values[3].value,
-        static_cast<unsigned long>(now_ms - sample.received_at_ms));
+    const int payload_length = values_valid
+        ? std::snprintf(
+            payload,
+            sizeof(payload),
+            "{\"type\":\"rgbc_measurement\",\"run_id\":%lu,"
+            "\"speed_profile\":\"%s\",\"target_speed_mps\":%.3f,"
+            "\"actual_speed_mps\":%.3f,\"distance_m\":%.1f,"
+            "\"actual_distance_m\":%.3f,\"checkpoint_meter\":%s,"
+            "\"rgbc_available\":true,\"R\":%.3f,\"G\":%.3f,"
+            "\"B\":%.3f,\"C\":%.3f,\"sample_age_ms\":%lu}",
+            static_cast<unsigned long>(rgbc_run_id_),
+            config::experiment::activeProfileName(),
+            static_cast<double>(config::experiment::activeSpeedMps()),
+            static_cast<double>(motor_service_.getAverageSpeedMps()),
+            static_cast<double>(next_rgbc_sample_distance_m_),
+            static_cast<double>(travelled_distance_m),
+            checkpoint,
+            sample.values[0].value,
+            sample.values[1].value,
+            sample.values[2].value,
+            sample.values[3].value,
+            static_cast<unsigned long>(now_ms - sample.received_at_ms))
+        : std::snprintf(
+            payload,
+            sizeof(payload),
+            "{\"type\":\"rgbc_measurement\",\"run_id\":%lu,"
+            "\"speed_profile\":\"%s\",\"target_speed_mps\":%.3f,"
+            "\"actual_speed_mps\":%.3f,\"distance_m\":%.1f,"
+            "\"actual_distance_m\":%.3f,\"checkpoint_meter\":%s,"
+            "\"rgbc_available\":false,\"R\":null,\"G\":null,"
+            "\"B\":null,\"C\":null,\"sample_age_ms\":null}",
+            static_cast<unsigned long>(rgbc_run_id_),
+            config::experiment::activeProfileName(),
+            static_cast<double>(config::experiment::activeSpeedMps()),
+            static_cast<double>(motor_service_.getAverageSpeedMps()),
+            static_cast<double>(next_rgbc_sample_distance_m_),
+            static_cast<double>(travelled_distance_m),
+            checkpoint);
     if (payload_length <= 0 ||
         static_cast<std::size_t>(payload_length) >= sizeof(payload)) {
         ESP_LOGE(kTag, "RGBC milestone JSON formatting failed");
@@ -673,10 +678,11 @@ void MotionLoopTask::publishRgbcDistanceSamples(
     ++rgbc_samples_queued_;
     ESP_LOGI(
         kTag,
-        "RGBC milestone queued %u: planned=%.1f m actual=%.3f m payload=%s",
+        "track milestone queued %u: planned=%.1f m actual=%.3f m rgbc=%s payload=%s",
         static_cast<unsigned>(rgbc_samples_queued_),
         static_cast<double>(next_rgbc_sample_distance_m_),
         static_cast<double>(travelled_distance_m),
+        values_valid ? "ready" : "unavailable",
         payload);
     next_rgbc_sample_distance_m_ +=
         config::experiment::RGBC_SAMPLE_SPACING_M;
