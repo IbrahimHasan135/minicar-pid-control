@@ -4,8 +4,9 @@
 
 namespace minicar::config::rtos {
 
-constexpr uint32_t CONTROL_PERIOD_MS = 10;
-constexpr float CONTROL_PERIOD_S = 0.01f;
+// Run the motor feedback loop at 200 Hz for faster encoder/PID response.
+constexpr uint32_t CONTROL_PERIOD_MS = 5;
+constexpr float CONTROL_PERIOD_S = 0.005f;
 
 constexpr uint32_t CONTROL_TASK_STACK_WORDS = 4096;
 constexpr uint32_t MOTION_TASK_STACK_WORDS = 4096;

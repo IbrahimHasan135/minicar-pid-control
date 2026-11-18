@@ -6,8 +6,15 @@
 #include <cstring>
 
 #include "config/FreeRTOSConfig.hpp"
+#include "config/ExperimentConfig.hpp"
+#include "config/NavigationSerialConfig.hpp"
 #include "config/PIDConfig.hpp"
 #include "config/RobotConfig.hpp"
+#include "esp_log.h"
+
+namespace {
+constexpr const char* kTag = "MotionLoopTask";
+}
 
 namespace minicar::logic::motion_control {
 
@@ -16,12 +23,16 @@ MotionLoopTask::MotionLoopTask(
     service::MotorControlService& motor_service,
     service::HeadingService& heading_service,
     service::OdometryService& odometry_service,
-    QueueHandle_t telemetry_queue)
+    service::RgbcSampleStore& rgbc_sample_store,
+    QueueHandle_t telemetry_queue,
+    logic::MqttPublishEventQueue& mqtt_publish_queue)
     : context_(context),
       motor_service_(motor_service),
       heading_service_(heading_service),
       odometry_service_(odometry_service),
+      rgbc_sample_store_(rgbc_sample_store),
       telemetry_queue_(telemetry_queue),
+      mqtt_publish_queue_(mqtt_publish_queue),
       left_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD),
       right_speed_pid_(config::pid::SPEED_KP, config::pid::SPEED_KI, config::pid::SPEED_KD)
 {
@@ -51,10 +62,12 @@ void MotionLoopTask::run()
 {
     TickType_t last_wake_tick = xTaskGetTickCount();
     last_telemetry_tick_ = last_wake_tick;
+    const TickType_t control_period_ticks = std::max<TickType_t>(
+        1, pdMS_TO_TICKS(config::rtos::CONTROL_PERIOD_MS));
 
     while (true) {
         step(config::rtos::CONTROL_PERIOD_S);
-        vTaskDelayUntil(&last_wake_tick, pdMS_TO_TICKS(config::rtos::CONTROL_PERIOD_MS));
+        vTaskDelayUntil(&last_wake_tick, control_period_ticks);
     }
 }
 
@@ -128,17 +141,35 @@ void MotionLoopTask::startMove(const model::MotionCommand& command)
     right_speed_pid_.reset();
     filtered_left_speed_mps_ = 0.0f;
     filtered_right_speed_mps_ = 0.0f;
+    ramped_move_target_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    heading_error_deg_ = 0.0f;
+    heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
+    right_pid_target_mps_ = 0.0f;
+    move_start_left_ticks_ = motor_service_.getLeftTicks();
+    move_start_right_ticks_ = motor_service_.getRightTicks();
     feedback_filter_initialized_ = false;
     heading_service_.resetController();
+    ++rgbc_run_id_;
+    rgbc_samples_queued_ = 0;
+    next_rgbc_sample_distance_m_ =
+        config::experiment::RGBC_SAMPLE_SPACING_M;
+    rgbc_experiment_active_ = command.value > 0.0f;
+    last_rgbc_wait_log_tick_ = 0;
 
     const float speed_mps = std::clamp(
         std::fabs(command.speed),
         0.0f,
         config::robot::MAX_LINEAR_SPEED_MPS);
 
-    const float duration_s = std::fabs(command.value) / speed_mps;
+    // Encoder distance is the primary completion condition. Keep a generous
+    // time limit only as a fail-safe for a disconnected/stalled encoder.
+    constexpr float MOVE_TIMEOUT_FACTOR = 2.0f;
+    const float duration_s =
+        (std::fabs(command.value) / speed_mps) * MOVE_TIMEOUT_FACTOR;
     const auto duration_ms = static_cast<uint32_t>(std::ceil(duration_s * 1000.0f));
     move_until_tick_ = xTaskGetTickCount() + pdMS_TO_TICKS(std::max<uint32_t>(1U, duration_ms));
 
@@ -164,10 +195,33 @@ void MotionLoopTask::startTurn(const model::MotionCommand& command)
     left_speed_pid_.reset();
     right_speed_pid_.reset();
     heading_service_.resetController();
+    previous_left_output_ = 0.0f;
+    previous_right_output_ = 0.0f;
+    heading_error_deg_ = 0.0f;
     turn_direction_ = (command.value >= 0.0f) ? 1.0f : -1.0f;
+    turn_target_angle_deg_ = std::fabs(command.value);
+    turn_raw_progress_deg_ = 0.0f;
+    turn_progress_deg_ = 0.0f;
+    turn_remaining_deg_ = turn_target_angle_deg_;
+    turn_sync_output_ = 0.0f;
+    turn_start_left_ticks_ = motor_service_.getLeftTicks();
+    turn_start_right_ticks_ = motor_service_.getRightTicks();
 
+    const float start_heading_deg = heading_service_.getHeadingDeg();
+    // Positive turn commands are defined as a physical right turn. On this
+    // drivetrain/IMU installation a right turn decreases magnetic heading.
     const float target_heading_deg = service::HeadingService::normalizeAngleDeg(
-        heading_service_.getHeadingDeg() + command.value);
+        start_heading_deg - command.value);
+    turn_until_tick_ = xTaskGetTickCount() +
+        pdMS_TO_TICKS(config::robot::TURN_TIMEOUT_MS);
+
+    ESP_LOGI(
+        kTag,
+        "turn started: angle=%.1f start=%.2f target=%.2f timeout=%lu ms",
+        static_cast<double>(command.value),
+        static_cast<double>(start_heading_deg),
+        static_cast<double>(target_heading_deg),
+        static_cast<unsigned long>(config::robot::TURN_TIMEOUT_MS));
 
     context_.beginTurn(command.value, target_heading_deg);
 }
@@ -229,19 +283,38 @@ void MotionLoopTask::handleWait(const MotionControlSnapshot& snapshot)
 
 void MotionLoopTask::handleMove(const MotionControlSnapshot& snapshot, float dt_s)
 {
+    const float travelled_distance_m = std::fabs(
+        odometry_service_.getTravelledDistanceM() - snapshot.start_distance_m);
+    const float target_distance_m = std::fabs(snapshot.target_distance_m);
+    publishRgbcDistanceSamples(travelled_distance_m, target_distance_m);
+    if (travelled_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M >=
+        target_distance_m) {
+        left_target_mps_ = 0.0f;
+        right_target_mps_ = 0.0f;
+        motor_service_.stopMotor();
+        ESP_LOGI(kTag, "encoder distance target reached: travelled=%.3f target=%.3f",
+                 static_cast<double>(travelled_distance_m),
+                 static_cast<double>(target_distance_m));
+        publishRgbcSessionComplete(travelled_distance_m);
+        context_.setCompleted();
+        return;
+    }
+
     if (static_cast<int32_t>(xTaskGetTickCount() - move_until_tick_) >= 0) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
+        ESP_LOGW(kTag, "move timeout before encoder target: travelled=%.3f target=%.3f",
+                 static_cast<double>(travelled_distance_m),
+                 static_cast<double>(target_distance_m));
         context_.setCompleted();
         return;
     }
 
     const float direction = (snapshot.target_distance_m >= 0.0f) ? 1.0f : -1.0f;
     const float base_speed_mps = direction * snapshot.target_speed_mps;
-    // Do not use odometry or IMU to stop/correct straight movement in this
-    // test. The duration controls completion and the speed controller below
-    // keeps both wheel velocities matched.
+    // The left wheel remains the speed master. IMU supervision of the right
+    // follower is applied later, after the master speed has been measured.
     left_target_mps_ = base_speed_mps;
     right_target_mps_ = base_speed_mps;
     (void)dt_s;
@@ -252,23 +325,87 @@ void MotionLoopTask::handleTurn(const MotionControlSnapshot& snapshot, float dt_
     const float angle_error_deg = service::HeadingService::shortestAngleErrorDeg(
         snapshot.target_heading_deg,
         heading_service_.getHeadingDeg());
+    heading_error_deg_ = angle_error_deg;
 
-    // Stop when the measured heading reaches or crosses the target. Do not
-    // reverse to correct overshoot during this open-loop turn test.
-    if ((turn_direction_ * angle_error_deg) <= 0.0f) {
+    constexpr float PI = 3.14159265358979323846f;
+    constexpr float METERS_PER_TICK =
+        (config::robot::WHEEL_DIAMETER_M * PI) /
+        static_cast<float>(config::robot::ENCODER_TICKS_PER_REV);
+    const int32_t left_turn_ticks = std::abs(
+        motor_service_.getLeftTicks() - turn_start_left_ticks_);
+    const int32_t right_turn_ticks = std::abs(
+        motor_service_.getRightTicks() - turn_start_right_ticks_);
+    const float left_turn_distance_m =
+        static_cast<float>(left_turn_ticks) * METERS_PER_TICK;
+    const float right_turn_distance_m =
+        static_cast<float>(right_turn_ticks) * METERS_PER_TICK;
+    const float average_wheel_arc_m =
+        0.5f * (left_turn_distance_m + right_turn_distance_m);
+    turn_raw_progress_deg_ = average_wheel_arc_m /
+        (config::robot::WHEEL_BASE_M * 0.5f) * (180.0f / PI);
+    turn_progress_deg_ = turn_raw_progress_deg_ /
+        config::robot::TURN_ENCODER_ARC_MULTIPLIER;
+    turn_remaining_deg_ = std::max(
+        0.0f, turn_target_angle_deg_ - turn_progress_deg_);
+
+    if (static_cast<int32_t>(xTaskGetTickCount() - turn_until_tick_) >= 0) {
+        motor_service_.stopMotor();
+        ESP_LOGE(
+            kTag,
+            "turn timeout: target=%.2f heading=%.2f error=%.2f",
+            static_cast<double>(snapshot.target_heading_deg),
+            static_cast<double>(heading_service_.getHeadingDeg()),
+            static_cast<double>(angle_error_deg));
+        failSafeStop();
+        return;
+    }
+
+    // Encoder wheel arc is the primary completion condition. IMU heading stays
+    // available as an independent diagnostic and cannot cause a full rotation.
+    if (turn_remaining_deg_ <= config::robot::TURN_ANGLE_TOLERANCE_DEG) {
         left_target_mps_ = 0.0f;
         right_target_mps_ = 0.0f;
         motor_service_.stopMotor();
+        previous_left_output_ = 0.0f;
+        previous_right_output_ = 0.0f;
+        ESP_LOGI(
+            kTag,
+            "turn target reached: encoder_angle=%.2f target_angle=%.2f "
+            "heading_target=%.2f heading=%.2f heading_error=%.2f yaw=%.2f",
+            static_cast<double>(turn_progress_deg_),
+            static_cast<double>(turn_target_angle_deg_),
+            static_cast<double>(snapshot.target_heading_deg),
+            static_cast<double>(heading_service_.getHeadingDeg()),
+            static_cast<double>(angle_error_deg),
+            static_cast<double>(heading_service_.getYawRateDps()));
         context_.setCompleted();
         return;
     }
 
-    // Deliberately bypass both heading PID and wheel-speed PID for this bench
-    // test. Run both motors at a fixed, opposite PWM until the IMU crosses the
-    // requested heading.
+    // Slow down over the final part of the turn to avoid a large inertial
+    // overshoot while retaining a minimum output that can move the drivetrain.
     (void)dt_s;
-    const float left_output = turn_direction_ * config::robot::OPEN_LOOP_TURN_OUTPUT;
-    const float right_output = -left_output;
+    const float turn_output = std::clamp(
+        config::robot::OPEN_LOOP_TURN_OUTPUT *
+            (turn_remaining_deg_ / config::robot::TURN_SLOWDOWN_ANGLE_DEG),
+        config::robot::MIN_TURN_OUTPUT,
+        config::robot::OPEN_LOOP_TURN_OUTPUT);
+    const float turn_tick_error =
+        static_cast<float>(left_turn_ticks - right_turn_ticks);
+    turn_sync_output_ = std::clamp(
+        config::robot::TURN_SYNC_OUTPUT_PER_TICK * turn_tick_error,
+        -config::robot::TURN_SYNC_MAX_OUTPUT,
+        config::robot::TURN_SYNC_MAX_OUTPUT);
+    const float left_output_magnitude = std::clamp(
+        turn_output - turn_sync_output_,
+        config::robot::TURN_MIN_WHEEL_OUTPUT,
+        config::robot::TURN_MAX_WHEEL_OUTPUT);
+    const float right_output_magnitude = std::clamp(
+        turn_output + turn_sync_output_,
+        config::robot::TURN_MIN_WHEEL_OUTPUT,
+        config::robot::TURN_MAX_WHEEL_OUTPUT);
+    const float left_output = turn_direction_ * left_output_magnitude;
+    const float right_output = -turn_direction_ * right_output_magnitude;
     left_target_mps_ = turn_direction_;
     right_target_mps_ = -turn_direction_;
     previous_left_output_ = left_output;
@@ -285,8 +422,14 @@ void MotionLoopTask::stopAndIdle()
     right_speed_pid_.reset();
     filtered_left_speed_mps_ = 0.0f;
     filtered_right_speed_mps_ = 0.0f;
+    ramped_move_target_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    heading_error_deg_ = 0.0f;
+    heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
+    right_pid_target_mps_ = 0.0f;
     feedback_filter_initialized_ = false;
     context_.setIdle();
 }
@@ -298,8 +441,14 @@ void MotionLoopTask::failSafeStop()
     motor_service_.stopMotor();
     left_speed_pid_.reset();
     right_speed_pid_.reset();
+    ramped_move_target_mps_ = 0.0f;
     previous_left_output_ = 0.0f;
     previous_right_output_ = 0.0f;
+    heading_error_deg_ = 0.0f;
+    heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
+    right_pid_target_mps_ = 0.0f;
     context_.setError();
 }
 
@@ -312,8 +461,12 @@ void MotionLoopTask::applySpeedControl(float dt_s)
     if (std::fabs(left_target_mps_) <= 0.001f && std::fabs(right_target_mps_) <= 0.001f) {
         left_speed_pid_.reset();
         right_speed_pid_.reset();
+        ramped_move_target_mps_ = 0.0f;
         previous_left_output_ = 0.0f;
         previous_right_output_ = 0.0f;
+        right_pid_target_mps_ = 0.0f;
+        heading_speed_correction_mps_ = 0.0f;
+        encoder_sync_correction_mps_ = 0.0f;
         motor_service_.stopMotor();
         return;
     }
@@ -332,11 +485,78 @@ void MotionLoopTask::applySpeedControl(float dt_s)
 
     float left_pid_target_mps = left_target_mps_;
     float right_pid_target_mps = right_target_mps_;
+    heading_error_deg_ = 0.0f;
+    heading_speed_correction_mps_ = 0.0f;
+    encoder_distance_error_m_ = 0.0f;
+    encoder_sync_correction_mps_ = 0.0f;
+    right_pid_target_mps_ = right_pid_target_mps;
     // Master/follower synchronization is only for straight-line motion.
     // During a turn, the two wheel targets must keep opposite signs.
     if (context_.snapshot().state == model::MotionState::MOVING) {
+        const float max_target_step =
+            config::pid::MOVE_TARGET_ACCELERATION_MPS2 * dt_s;
+        ramped_move_target_mps_ += std::clamp(
+            left_target_mps_ - ramped_move_target_mps_,
+            -max_target_step,
+            max_target_step);
+        left_pid_target_mps = ramped_move_target_mps_;
+        right_pid_target_mps = ramped_move_target_mps_;
+
         if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::LEFT) {
-            right_pid_target_mps = filtered_left_speed_mps_;
+            constexpr float METERS_PER_TICK =
+                (config::robot::WHEEL_DIAMETER_M * 3.14159265358979323846f) /
+                static_cast<float>(config::robot::ENCODER_TICKS_PER_REV);
+            const int32_t left_delta_ticks =
+                motor_service_.getLeftTicks() - move_start_left_ticks_;
+            const int32_t right_delta_ticks =
+                motor_service_.getRightTicks() - move_start_right_ticks_;
+            const float travel_direction =
+                left_target_mps_ >= 0.0f ? 1.0f : -1.0f;
+            const float desired_right_ticks =
+                static_cast<float>(left_delta_ticks) *
+                (1.0f + config::pid::RIGHT_ENCODER_DISTANCE_LEAD_RATIO);
+            encoder_distance_error_m_ = travel_direction *
+                (desired_right_ticks - static_cast<float>(right_delta_ticks)) *
+                METERS_PER_TICK;
+            encoder_sync_correction_mps_ = travel_direction * std::clamp(
+                config::pid::ENCODER_SYNC_KP_PER_S * encoder_distance_error_m_,
+                -config::pid::ENCODER_SYNC_MAX_CORRECTION_MPS,
+                config::pid::ENCODER_SYNC_MAX_CORRECTION_MPS);
+
+            // Cascade control: heading adjusts the right wheel speed target;
+            // the right speed PID is the only controller that drives PWM.
+            const MotionControlSnapshot snapshot = context_.snapshot();
+            heading_error_deg_ =
+                service::HeadingService::shortestAngleErrorDeg(
+                    snapshot.target_heading_deg,
+                    heading_service_.getHeadingDeg());
+
+            if constexpr (config::robot::ENABLE_STRAIGHT_IMU_CORRECTION) {
+                const float absolute_heading_error =
+                    std::fabs(heading_error_deg_);
+                if (absolute_heading_error >
+                        config::robot::STRAIGHT_HEADING_DEADBAND_DEG &&
+                    absolute_heading_error <=
+                        config::robot::STRAIGHT_HEADING_VALID_ERROR_DEG) {
+                    const float damped_yaw_rate_dps = std::clamp(
+                        heading_service_.getYawRateDps(),
+                        -config::robot::STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS,
+                        config::robot::STRAIGHT_HEADING_YAW_RATE_LIMIT_DPS);
+                    heading_speed_correction_mps_ = std::clamp(
+                        config::robot::STRAIGHT_HEADING_KP_SPEED_PER_DEG *
+                                heading_error_deg_ -
+                            config::robot::STRAIGHT_HEADING_KD_SPEED_PER_DPS *
+                                damped_yaw_rate_dps,
+                        -config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS,
+                        config::robot::STRAIGHT_HEADING_MAX_SPEED_CORRECTION_MPS);
+                }
+            }
+            right_pid_target_mps = std::clamp(
+                ramped_move_target_mps_ + encoder_sync_correction_mps_ +
+                    heading_speed_correction_mps_,
+                -config::robot::MAX_WHEEL_SPEED_MPS,
+                config::robot::MAX_WHEEL_SPEED_MPS);
+            right_pid_target_mps_ = right_pid_target_mps;
         } else if (config::pid::SPEED_MASTER == config::pid::SpeedMaster::RIGHT) {
             left_pid_target_mps = filtered_right_speed_mps_;
         }
@@ -365,6 +585,141 @@ void MotionLoopTask::applySpeedControl(float dt_s)
         clamped_left_output, clamped_right_output);
 }
 
+void MotionLoopTask::publishRgbcDistanceSamples(
+    float travelled_distance_m,
+    float target_distance_m)
+{
+    if (!rgbc_experiment_active_ ||
+        next_rgbc_sample_distance_m_ >
+            target_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M ||
+        travelled_distance_m + config::robot::MOVE_DISTANCE_TOLERANCE_M <
+            next_rgbc_sample_distance_m_) {
+        return;
+    }
+
+    model::NavigationSample sample{};
+    const std::uint32_t now_ms = static_cast<std::uint32_t>(
+        xTaskGetTickCount() * portTICK_PERIOD_MS);
+    const bool sample_available = rgbc_sample_store_.latest(sample);
+    const bool sample_fresh = sample_available &&
+        (now_ms - sample.received_at_ms) <=
+            config::experiment::RGBC_MAX_SAMPLE_AGE_MS;
+    const bool values_valid = sample_fresh &&
+        sample.values[0].valid && sample.values[1].valid &&
+        sample.values[2].valid && sample.values[3].valid;
+    const float rounded_meter = std::round(next_rgbc_sample_distance_m_);
+    const bool is_meter_checkpoint =
+        rounded_meter >= 1.0f && rounded_meter <= 3.0f &&
+        std::fabs(next_rgbc_sample_distance_m_ - rounded_meter) < 0.01f;
+    char checkpoint[12]{};
+    if (is_meter_checkpoint) {
+        std::snprintf(
+            checkpoint,
+            sizeof(checkpoint),
+            "%u",
+            static_cast<unsigned>(rounded_meter));
+    } else {
+        std::snprintf(checkpoint, sizeof(checkpoint), "null");
+    }
+
+    char payload[512]{};
+    const int payload_length = values_valid
+        ? std::snprintf(
+            payload,
+            sizeof(payload),
+            "{\"type\":\"rgbc_measurement\",\"run_id\":%lu,"
+            "\"speed_profile\":\"%s\",\"target_speed_mps\":%.3f,"
+            "\"actual_speed_mps\":%.3f,\"distance_m\":%.1f,"
+            "\"actual_distance_m\":%.3f,\"checkpoint_meter\":%s,"
+            "\"rgbc_available\":true,\"R\":%.3f,\"G\":%.3f,"
+            "\"B\":%.3f,\"C\":%.3f,\"sample_age_ms\":%lu}",
+            static_cast<unsigned long>(rgbc_run_id_),
+            config::experiment::activeProfileName(),
+            static_cast<double>(config::experiment::activeSpeedMps()),
+            static_cast<double>(motor_service_.getAverageSpeedMps()),
+            static_cast<double>(next_rgbc_sample_distance_m_),
+            static_cast<double>(travelled_distance_m),
+            checkpoint,
+            sample.values[0].value,
+            sample.values[1].value,
+            sample.values[2].value,
+            sample.values[3].value,
+            static_cast<unsigned long>(now_ms - sample.received_at_ms))
+        : std::snprintf(
+            payload,
+            sizeof(payload),
+            "{\"type\":\"rgbc_measurement\",\"run_id\":%lu,"
+            "\"speed_profile\":\"%s\",\"target_speed_mps\":%.3f,"
+            "\"actual_speed_mps\":%.3f,\"distance_m\":%.1f,"
+            "\"actual_distance_m\":%.3f,\"checkpoint_meter\":%s,"
+            "\"rgbc_available\":false,\"R\":null,\"G\":null,"
+            "\"B\":null,\"C\":null,\"sample_age_ms\":null}",
+            static_cast<unsigned long>(rgbc_run_id_),
+            config::experiment::activeProfileName(),
+            static_cast<double>(config::experiment::activeSpeedMps()),
+            static_cast<double>(motor_service_.getAverageSpeedMps()),
+            static_cast<double>(next_rgbc_sample_distance_m_),
+            static_cast<double>(travelled_distance_m),
+            checkpoint);
+    if (payload_length <= 0 ||
+        static_cast<std::size_t>(payload_length) >= sizeof(payload)) {
+        ESP_LOGE(kTag, "RGBC milestone JSON formatting failed");
+        return;
+    }
+
+    if (!mqtt_publish_queue_.pushJson(
+            config::navigation_serial::MQTT_NAVIGATION_TOPIC,
+            payload,
+            0)) {
+        ESP_LOGW(kTag, "RGBC milestone MQTT queue full; retrying");
+        return;
+    }
+
+    ++rgbc_samples_queued_;
+    ESP_LOGI(
+        kTag,
+        "track milestone queued %u: planned=%.1f m actual=%.3f m rgbc=%s payload=%s",
+        static_cast<unsigned>(rgbc_samples_queued_),
+        static_cast<double>(next_rgbc_sample_distance_m_),
+        static_cast<double>(travelled_distance_m),
+        values_valid ? "ready" : "unavailable",
+        payload);
+    next_rgbc_sample_distance_m_ +=
+        config::experiment::RGBC_SAMPLE_SPACING_M;
+}
+
+void MotionLoopTask::publishRgbcSessionComplete(float travelled_distance_m)
+{
+    if (!rgbc_experiment_active_) {
+        return;
+    }
+
+    char payload[256]{};
+    const int payload_length = std::snprintf(
+        payload,
+        sizeof(payload),
+        "{\"type\":\"session\",\"status\":\"complete\","
+        "\"run_id\":%lu,\"speed_profile\":\"%s\","
+        "\"target_speed_mps\":%.3f,\"distance_m\":%.3f,"
+        "\"samples_sent\":%u}",
+        static_cast<unsigned long>(rgbc_run_id_),
+        config::experiment::activeProfileName(),
+        static_cast<double>(config::experiment::activeSpeedMps()),
+        static_cast<double>(travelled_distance_m),
+        static_cast<unsigned>(rgbc_samples_queued_));
+    if (payload_length > 0 &&
+        static_cast<std::size_t>(payload_length) < sizeof(payload) &&
+        mqtt_publish_queue_.pushJson(
+            config::navigation_serial::MQTT_NAVIGATION_TOPIC,
+            payload,
+            0)) {
+        ESP_LOGI(kTag, "RGBC experiment complete: payload=%s", payload);
+    } else {
+        ESP_LOGW(kTag, "RGBC session marker could not be queued");
+    }
+    rgbc_experiment_active_ = false;
+}
+
 void MotionLoopTask::publishTelemetry()
 {
     if (telemetry_queue_ == nullptr ||
@@ -379,15 +734,44 @@ void MotionLoopTask::publishTelemetry()
     std::snprintf(message.tag, sizeof(message.tag), "%s", "motion");
     std::snprintf(
         message.message, sizeof(message.message),
-        "s=%u h=%.1f th=%.1f y=%.1f v=%.2f/%.2f o=%.2f/%.2f d=%.2f",
+        "s=%u h=%.1f t=%.1f e=%.1f v=%.2f/%.2f rt=%.2f hc=%.3f o=%.2f/%.2f d=%.2f",
         static_cast<unsigned>(snapshot.state),
         static_cast<double>(heading_service_.getHeadingDeg()),
         static_cast<double>(snapshot.target_heading_deg),
-        static_cast<double>(heading_service_.getYawRateDps()),
+        static_cast<double>(heading_error_deg_),
         static_cast<double>(motor_service_.getLeftVelocityMps()),
         static_cast<double>(motor_service_.getRightVelocityMps()),
+        static_cast<double>(right_pid_target_mps_),
+        static_cast<double>(heading_speed_correction_mps_),
         static_cast<double>(previous_left_output_),
         static_cast<double>(previous_right_output_),
+        static_cast<double>(odometry_service_.getTravelledDistanceM()));
+    ESP_LOGI(
+        kTag,
+        "CTRL heading=%.2f target=%.2f error=%.2f yaw=%.1f "
+        "turn_raw=%.1f turn_progress=%.1f turn_remaining=%.1f turn_sync=%.3f "
+        "speed_L/R=%.3f/%.3f move_target=%.3f right_target=%.3f heading_corr=%.3f "
+        "encoder_error=%.3f encoder_corr=%.3f "
+        "output_L/R=%.3f/%.3f ticks_L/R=%ld/%ld distance=%.3f",
+        static_cast<double>(heading_service_.getHeadingDeg()),
+        static_cast<double>(snapshot.target_heading_deg),
+        static_cast<double>(heading_error_deg_),
+        static_cast<double>(heading_service_.getYawRateDps()),
+        static_cast<double>(turn_raw_progress_deg_),
+        static_cast<double>(turn_progress_deg_),
+        static_cast<double>(turn_remaining_deg_),
+        static_cast<double>(turn_sync_output_),
+        static_cast<double>(motor_service_.getLeftVelocityMps()),
+        static_cast<double>(motor_service_.getRightVelocityMps()),
+        static_cast<double>(ramped_move_target_mps_),
+        static_cast<double>(right_pid_target_mps_),
+        static_cast<double>(heading_speed_correction_mps_),
+        static_cast<double>(encoder_distance_error_m_),
+        static_cast<double>(encoder_sync_correction_mps_),
+        static_cast<double>(previous_left_output_),
+        static_cast<double>(previous_right_output_),
+        static_cast<long>(motor_service_.getLeftTicks()),
+        static_cast<long>(motor_service_.getRightTicks()),
         static_cast<double>(odometry_service_.getTravelledDistanceM()));
     (void)xQueueSend(telemetry_queue_, &message, 0);
     last_telemetry_tick_ = xTaskGetTickCount();

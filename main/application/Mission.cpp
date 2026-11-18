@@ -1,8 +1,37 @@
 #include "application/Mission.hpp"
 
+#include "config/ExperimentConfig.hpp"
 #include "model/MotionCommand.hpp"
 
 namespace minicar::application {
+
+bool Mission::enqueueRgbcExperimentMission(QueueHandle_t motion_queue)
+{
+    return pushWait(
+               motion_queue,
+               config::experiment::RGBC_WARMUP_SECONDS) &&
+           pushMove(
+               motion_queue,
+               config::experiment::RUN_DISTANCE_M,
+               config::experiment::activeSpeedMps());
+}
+
+bool Mission::enqueueImuDiagnosticMission(QueueHandle_t motion_queue)
+{
+    constexpr float TEST_DISTANCE_M = 3.0f;
+    constexpr float TEST_SPEED_MPS = 0.2f;
+    return pushMove(motion_queue, TEST_DISTANCE_M, TEST_SPEED_MPS);
+}
+
+bool Mission::enqueueInitialTestMission(QueueHandle_t motion_queue)
+{
+    constexpr float TEST_DISTANCE_M = 1.0f;
+    constexpr float TEST_SPEED_MPS = 0.2f;
+    constexpr float RIGHT_TURN_DEG = 90.0f;
+
+    return pushMove(motion_queue, TEST_DISTANCE_M, TEST_SPEED_MPS) &&
+           pushTurn(motion_queue, RIGHT_TURN_DEG);
+}
 
 bool Mission::enqueueDemoMission(QueueHandle_t motion_queue)
 {
@@ -18,6 +47,12 @@ bool Mission::pushEncoderDemoMission(QueueHandle_t motion_queue)
            pushMove(motion_queue, 2.0f, 0.4f) &&
            pushMove(motion_queue, 2.0f, 0.58f) &&
            pushStop(motion_queue);
+}
+
+bool Mission::enqueueSingleTurnTestMission(QueueHandle_t motion_queue)
+{
+    constexpr float RIGHT_TURN_DEG = 90.0f;
+    return pushTurn(motion_queue, RIGHT_TURN_DEG);
 }
 
 bool Mission::enqueueTurnTestMission(QueueHandle_t motion_queue)

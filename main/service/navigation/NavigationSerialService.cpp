@@ -57,39 +57,65 @@ bool NavigationSerialService::parseJsonLine(
     }
 
     model::NavigationSample parsed{};
-    bool seen[4]{};
-    std::size_t member_count = 0;
-    bool valid = true;
-
-    for (cJSON* item = root->child; item != nullptr; item = item->next) {
-        ++member_count;
-        int index = -1;
-        if (item->string != nullptr && std::strlen(item->string) == 6 &&
-            std::strncmp(item->string, "value", 5) == 0 &&
-            item->string[5] >= '1' && item->string[5] <= '4') {
-            index = item->string[5] - '1';
+    bool valid = false;
+    cJSON* type = cJSON_GetObjectItemCaseSensitive(root, "type");
+    if (cJSON_IsString(type) && type->valuestring != nullptr &&
+        std::strcmp(type->valuestring, "rgbc") == 0 &&
+        cJSON_GetArraySize(root) == 5) {
+        constexpr const char* fields[4] = {"R", "G", "B", "C"};
+        valid = true;
+        parsed.type = model::NavigationSampleType::RGBC;
+        for (std::size_t i = 0; i < 4; ++i) {
+            cJSON* value = cJSON_GetObjectItemCaseSensitive(root, fields[i]);
+            if (!cJSON_IsNumber(value) ||
+                !std::isfinite(value->valuedouble)) {
+                valid = false;
+                break;
+            }
+            parsed.values[i].value = value->valuedouble;
+            parsed.values[i].valid = true;
         }
-
-        if (index < 0 || seen[index]) {
-            valid = false;
-            break;
+    } else if (cJSON_IsString(type) && type->valuestring != nullptr &&
+               std::strcmp(type->valuestring, "rf") == 0 &&
+               cJSON_GetArraySize(root) == 2) {
+        cJSON* routers = cJSON_GetObjectItemCaseSensitive(root, "routers");
+        const int router_count = cJSON_GetArraySize(routers);
+        valid = cJSON_IsArray(routers) && router_count >= 0 && router_count <= 4;
+        parsed.type = model::NavigationSampleType::RF;
+        for (int i = 0; valid && i < router_count; ++i) {
+            cJSON* router = cJSON_GetArrayItem(routers, i);
+            cJSON* short_address =
+                cJSON_GetObjectItemCaseSensitive(router, "short");
+            cJSON* rssi = cJSON_GetObjectItemCaseSensitive(router, "rssi");
+            valid = cJSON_IsObject(router) && cJSON_GetArraySize(router) == 2 &&
+                    cJSON_IsNumber(short_address) && cJSON_IsNumber(rssi) &&
+                    std::isfinite(short_address->valuedouble) &&
+                    std::isfinite(rssi->valuedouble) &&
+                    std::floor(short_address->valuedouble) ==
+                        short_address->valuedouble &&
+                    short_address->valuedouble >= 0.0 &&
+                    short_address->valuedouble <= 65535.0 &&
+                    std::floor(rssi->valuedouble) == rssi->valuedouble &&
+                    rssi->valuedouble >= -128.0 && rssi->valuedouble <= 127.0;
+            if (!valid) {
+                break;
+            }
+            const auto parsed_short = static_cast<std::uint16_t>(
+                short_address->valuedouble);
+            for (int j = 0; j < i; ++j) {
+                if (parsed.routers[j].short_address == parsed_short) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                break;
+            }
+            parsed.routers[i].short_address = parsed_short;
+            parsed.routers[i].rssi =
+                static_cast<std::int8_t>(rssi->valuedouble);
+            ++parsed.router_count;
         }
-        seen[index] = true;
-
-        if (cJSON_IsNull(item)) {
-            parsed.values[index].valid = false;
-        } else if (cJSON_IsNumber(item) && std::isfinite(item->valuedouble)) {
-            parsed.values[index].value = item->valuedouble;
-            parsed.values[index].valid = true;
-        } else {
-            valid = false;
-            break;
-        }
-    }
-
-    valid = valid && member_count == 4;
-    for (bool field_seen : seen) {
-        valid = valid && field_seen;
     }
 
     if (valid) {
